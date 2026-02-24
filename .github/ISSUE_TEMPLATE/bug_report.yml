@@ -1,0 +1,103 @@
+name: Bug Report
+description: Create a report to help us improve the application
+title: "[BUG] "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve our app!
+        Please provide detailed information below to assist us in resolving the issue quickly.
+        Search existing issues first to avoid duplicates.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Provide a clear and concise description of the bug.
+      placeholder: E.g., Application crashes after clicking the Save button.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Describe the steps required to reproduce the issue.
+      placeholder: |
+        1. Go to...
+        2. Click on...
+        3. Enter details...
+        4. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: The form should save successfully.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: The app crashes and shows an error message.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Add screenshots or screen recordings if applicable.
+      placeholder: Drag and drop images here.
+
+  - type: input
+    id: app_version
+    attributes:
+      label: App Version
+      placeholder: E.g., v1.0.5
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: E.g., Android 14 / iOS 17 / Windows 11
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (if applicable)
+      placeholder: E.g., Chrome 121, Safari 17
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      placeholder: E.g., Samsung S23, iPhone 14, Desktop
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Select the priority level.
+      options:
+        - Low
+        - Medium
+        - High
+        - Critical
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Information
+      description: Add logs, error messages, or any other context.
+      placeholder: Paste logs or additional details here.
