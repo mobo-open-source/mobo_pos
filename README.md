@@ -30,10 +30,10 @@ Mobo POS is a professional mobile application designed to bring the power of Odo
 ##  Screenshots
 
 <div>
-  <img src="images/screenshot1.png" width="200" style="margin:8px;" />
-  <img src="images/screenshot2.png" width="200" style="margin:8px;" />
-  <img src="images/screenshot3.png" width="200" style="margin:8px;" />
-  <img src="images/screenshot4.png" width="200" style="margin:8px;" />
+  <img src="assets/screenshot1.png" width="200" style="margin:8px;" />
+  <img src="assets/screenshot2.png" width="200" style="margin:8px;" />
+  <img src="assets/screenshot3.png" width="200" style="margin:8px;" />
+  <img src="assets/screenshot4.png" width="200" style="margin:8px;" />
 </div>
 
 ##  Technology Stack
