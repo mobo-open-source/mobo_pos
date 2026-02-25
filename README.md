@@ -64,7 +64,7 @@ Tested and verified on:
 1. **Clone the repository**
    ```bash
    git clone https://github.com/mobo-open-source/mobo_pos.git
-   cd mobo_pos-main
+   cd mobo_pos
    ```
 
 2. **Install dependencies**
