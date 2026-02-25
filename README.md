@@ -63,7 +63,7 @@ Tested and verified on:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-username/mobo_pos-main.git
+   git clone https://github.com/mobo-open-source/mobo_pos.git
    cd mobo_pos-main
    ```
 
