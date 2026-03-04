@@ -96,7 +96,8 @@ To get started with Mobo POS:
 ##  Maintainers
 
 **Team Mobo at Cybrosys Technologies**
--  [mobo@cybrosys.com](mailto:mobo@cybrosys.com)
+- Email [mobo@cybrosys.com](mailto:mobo@cybrosys.com)
+- Website - https://www.cybrosys.com/mobo/
 
 ## License
 
