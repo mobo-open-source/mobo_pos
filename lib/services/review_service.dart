@@ -135,7 +135,7 @@ class ReviewService {
      await _checkAndRequestReview(prefs, context);
   }
 
-  /// Force a review request. If the native dialog is suppressed by Google Play
+  /// Force a review request. If the native dialog is suppressed by the platform
   /// (due to quotas), it will fall back to opening the Store Listing directly.
   Future<void> forceRequestReview() async {
     // Update next allowed date to enforce cooldown period
@@ -144,7 +144,7 @@ class ReviewService {
     // Show a small snackbar so the user knows the code is working
     scaffoldMessengerKey.currentState?.showSnackBar(
       SnackBar(
-        content: const Text('🔄 Requesting Google Play review...'),
+        content: const Text('🔄 Requesting review...'),
         duration: const Duration(seconds: 2),
         backgroundColor: Colors.blue[700],
       ),
