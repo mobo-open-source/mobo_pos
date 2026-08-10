@@ -73,3 +73,11 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // SDK-Suite "xsuite" OmniDriver — drives the M20 built-in printer via the
+    // on-device com.sdksuite.omnidriver/.OmniDriverService. Used by
+    // com.cybrosys.mobo_pos.printer.LandiPrinterBackend.
+    implementation(files("libs/xsuite-omnidriver-api-0.3.1+241011.aar"))
+    implementation(files("libs/xsuite-corebridge-api-0.1.0+240530.aar"))
+}

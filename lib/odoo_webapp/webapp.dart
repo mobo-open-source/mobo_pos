@@ -18,6 +18,8 @@ import '../Isarmodel/Isar.dart';
 import 'profile.dart';
 import '../Loginpage/server_setup_screen.dart';
 import '../services/review_service.dart';
+import '../services/printer_service.dart';
+import '../services/receipt_data.dart';
 import '../core/image_utils.dart';
 
 class WebViewApp extends StatefulWidget {
@@ -49,6 +51,11 @@ class _WebViewAppState extends State<WebViewApp> {
   double loadingProgress = 0.0;
   String? dbName;
   bool _isLoadingProfilePicture = false;
+
+  // Receipt printing (Landi M20 built-in or network ESC/POS printer).
+  final PrinterService _printerService = PrinterService();
+  PrinterConfig? _printerConfig;
+  bool _printerEnabled = false;
 
   Future<void> fetchProfilePicture() async {
     try {
@@ -260,6 +267,104 @@ class _WebViewAppState extends State<WebViewApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ReviewService().checkAndShowRating(context);
     });
+
+    _loadPrinterConfig();
+  }
+
+  Future<void> _loadPrinterConfig() async {
+    final config = await _printerService.loadConfig();
+    if (!mounted) return;
+    setState(() {
+      _printerConfig = config;
+      _printerEnabled = config.enabled;
+    });
+  }
+
+  /// Called from JS (`printReceipt` handler) with the extracted receipt data.
+  Future<Map<String, dynamic>> _handlePrintReceipt(List<dynamic> args) async {
+    try {
+      if (args.isEmpty || args.first == null) {
+        return {'ok': false, 'error': 'No receipt data'};
+      }
+      final data = ReceiptData.fromJson(
+          Map<dynamic, dynamic>.from(args.first as Map));
+      final result = await _printerService.printReceipt(data);
+      if (mounted && !result.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Print failed: ${result.message}')),
+        );
+      }
+      return {'ok': result.success, 'error': result.message};
+    } catch (e) {
+      return {'ok': false, 'error': '$e'};
+    }
+  }
+
+  /// Manually print the receipt currently shown in the Odoo POS.
+  Future<void> _printCurrentReceipt() async {
+    final result = await webViewController?.evaluateJavascript(
+      source:
+          'window.moboPrintCurrentReceipt ? window.moboPrintCurrentReceipt() : false;',
+    );
+    if (mounted && (result == false || result == null)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No receipt on screen to print')),
+      );
+    }
+  }
+
+  /// Inject the JS bridge that reads the Odoo receipt and (optionally)
+  /// auto-prints it when a receipt is shown after payment.
+  Future<void> _injectPrinterBridge() async {
+    final config = _printerConfig ?? await _printerService.loadConfig();
+    if (!config.enabled) return;
+    final autoPrint = config.autoPrint ? 'true' : 'false';
+    await webViewController?.evaluateJavascript(source: '''
+(function(){
+  if (window.__moboPrinterInstalled) { window.__moboAutoPrint = $autoPrint; return; }
+  window.__moboPrinterInstalled = true;
+  window.__moboAutoPrint = $autoPrint;
+
+  function textOf(el){ return el ? (el.innerText || el.textContent || '').replace(/\\u00a0/g,' ').trim() : ''; }
+
+  window.moboExtractReceipt = function(){
+    var el = document.querySelector('.pos-receipt');
+    if(!el){ return null; }
+    var data = { rawText: textOf(el), storeName: '', headerLines: [], lines: [], total: '', payments: [], change: '', footerLines: [] };
+    try {
+      var name = el.querySelector('.pos-receipt-contact, .company-name, h2, h3');
+      if(name){ data.storeName = textOf(name).split('\\n')[0]; }
+      el.querySelectorAll('.orderline').forEach(function(li){
+        var nm = textOf(li.querySelector('.product-name')) || textOf(li).split('\\n')[0];
+        var priceEl = li.querySelector('.pos-receipt-right-align, .price');
+        var price = priceEl ? textOf(priceEl) : '';
+        var qtyMatch = textOf(li).match(/([0-9][0-9.,]*)\\s*[xX]\\s*/);
+        var qty = qtyMatch ? qtyMatch[1] : '';
+        if(nm){ data.lines.push({ name: nm, qty: qty, price: price }); }
+      });
+      var totalEl = el.querySelector('.pos-receipt-amount');
+      if(totalEl){ data.total = textOf(totalEl).replace(/total/i,'').trim(); }
+    } catch(e) {}
+    return data;
+  };
+
+  window.moboPrintCurrentReceipt = function(){
+    var data = window.moboExtractReceipt();
+    if(data){ window.flutter_inappwebview.callHandler('printReceipt', data); return true; }
+    return false;
+  };
+
+  var observer = new MutationObserver(function(){
+    if(!window.__moboAutoPrint) return;
+    var el = document.querySelector('.pos-receipt');
+    if(el && !el.getAttribute('data-mobo-printed')){
+      el.setAttribute('data-mobo-printed','1');
+      window.moboPrintCurrentReceipt();
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+})();
+''');
   }
 
   @override
@@ -614,6 +719,17 @@ class _WebViewAppState extends State<WebViewApp> {
           preferredSize: const Size.fromHeight(40.0),
           child: AppBar(
             actions: [
+              if (_printerEnabled)
+                IconButton(
+                  tooltip: 'Print receipt',
+                  onPressed: _printCurrentReceipt,
+                  icon: Icon(
+                    Icons.print,
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? Colors.grey[400]
+                        : Colors.grey[700],
+                  ),
+                ),
               IconButton(
                 onPressed: () async {
                   await Navigator.push(
@@ -681,6 +797,10 @@ class _WebViewAppState extends State<WebViewApp> {
                 onWebViewCreated: (controller) {
                   webViewController = controller;
                   setCookieHeader();
+                  controller.addJavaScriptHandler(
+                    handlerName: 'printReceipt',
+                    callback: (args) => _handlePrintReceipt(args),
+                  );
                 },
                 onLoadStart: (controller, url) async {
                   setState(() {
@@ -764,6 +884,7 @@ class _WebViewAppState extends State<WebViewApp> {
                     isLoading = false;
                   });
                   _refreshWebProfile();
+                  _injectPrinterBridge();
                 },
                 onLoadError: (controller, url, code, message) {
                   setState(() {

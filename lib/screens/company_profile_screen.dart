@@ -35,7 +35,9 @@ class _CompanyProfileScreenState extends State<CompanyProfileScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final serverUrl = prefs.getString("uri");
-      final dbName = prefs.getString("database");
+      // Login flows persist the database under either key; accept both.
+      final dbName =
+          prefs.getString("database") ?? prefs.getString("dbName");
       final sessionId = prefs.getString("session_id");
 
       if (serverUrl == null || dbName == null || sessionId == null) {
@@ -60,16 +62,59 @@ class _CompanyProfileScreenState extends State<CompanyProfileScreen> {
 
       final client = OdooClient(serverUrl, );
 
-      // CRITICAL: Re-authenticate the client
+      // CRITICAL: Re-authenticate the client. Prefer the login used by the
+      // web session (userLogin), falling back to username.
       final username = prefs.getString("username");
+      final userLogin = prefs.getString("userLogin");
+      final authLogin = userLogin ?? username;
       final password = prefs.getString("password");
-      if (username != null && password != null) {
-        await client.authenticate(dbName, username, password);
+      if (authLogin != null && password != null) {
+        await client.authenticate(dbName, authLogin, password);
       }
 
       // Get company ID from session
       final companyId = session.companyId;
-      
+
+      // Fields we'd like to show. Availability varies by Odoo version — e.g.
+      // Odoo 19 removed 'mobile' from res.company and added 'alias_domain_id'.
+      // Requesting a field that doesn't exist makes the whole search_read fail,
+      // so we first ask Odoo which of these actually exist and request only those.
+      const desiredFields = [
+        'name',
+        'phone',
+        'mobile',
+        'email',
+        'website',
+        'street',
+        'city',
+        'state_id',
+        'country_id',
+        'vat',
+        'logo_web',
+        'company_registry',
+        'alias_domain_id',
+      ];
+
+      Set<String> availableFields = {};
+      try {
+        final meta = await client.callKw({
+          'model': 'res.company',
+          'method': 'fields_get',
+          'args': [],
+          'kwargs': {'attributes': <String>[]},
+        });
+        if (meta is Map) {
+          availableFields = meta.keys.map((e) => e.toString()).toSet();
+        }
+      } catch (e) {
+        log("fields_get failed; requesting all desired fields: $e");
+      }
+
+      final fields = availableFields.isEmpty
+          ? List<String>.from(desiredFields)
+          : desiredFields.where(availableFields.contains).toList();
+      if (!fields.contains('name')) fields.insert(0, 'name');
+
       final companyDetails = await client.callKw({
         'model': 'res.company',
         'method': 'search_read',
@@ -78,23 +123,7 @@ class _CompanyProfileScreenState extends State<CompanyProfileScreen> {
             ['id', '=', companyId]
           ]
         ],
-        'kwargs': {
-          'fields': [
-            'name',
-            'phone',
-            'mobile',
-            'email',
-            'website',
-            'street',
-            'city',
-            'state_id',
-            'country_id',
-            'vat',
-            'logo_web',
-            'company_registry',
-            'alias_domain_id',
-          ],
-        },
+        'kwargs': {'fields': fields},
       });
 
       if (companyDetails != null && companyDetails.isNotEmpty) {
@@ -633,6 +662,17 @@ class CompanyErrorView extends StatelessWidget {
                 color: isDark ? Colors.grey[400] : Colors.grey[600],
               ),
             ),
+            if (errorMessage.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                errorMessage,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.grey[500] : Colors.grey[500],
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: onRetry,

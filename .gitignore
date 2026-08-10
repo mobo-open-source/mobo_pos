@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Vendor SDK docs + reference libraries (69MB) — kept locally, not in the repo.
+# The build only needs the printer .aar(s) under android/app/libs/.
+/lib/printers/
