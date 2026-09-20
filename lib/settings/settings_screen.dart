@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:mobo_pos/Loginpage/login.dart';
 import '../services/biometric_service.dart';
 import '../screens/company_profile_screen.dart';
+import 'printer_settings_screen.dart';
 import '../providers/theme_provider.dart';
 import '../ui/dialogs/app_dialogs.dart';
 
@@ -370,7 +371,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          
+
+          // Hardware Section
+          _buildSectionCard(
+            context,
+            'Hardware',
+            HugeIcons.strokeRoundedSettings02,
+            [
+              _buildActionTile(
+                context,
+                'Receipt Printer',
+                'Configure the Landi M20 or a network printer',
+                HugeIcons.strokeRoundedSettings02,
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const PrinterSettingsScreen(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
           // Help & Support Section
           _buildSectionCard(
             context,
