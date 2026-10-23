@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../services/reset_password_service.dart';
 
 /// Screen for requesting a password reset email from the Odoo server.
@@ -79,6 +79,20 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
     });
 
     final formValid = _formKey.currentState?.validate() ?? false;
+    setState(() {
+      _emailHasError = _emailController.text.trim().isEmpty ||
+          !ResetPasswordService.isValidEmail(_emailController.text.trim());
+    });
+
+    if (!formValid) {
+      await HapticFeedback.lightImpact();
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
       final result = await ResetPasswordService.sendResetPasswordEmail(
         serverUrl: widget.url ?? '',
@@ -122,9 +136,11 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return WillPopScope(
-      onWillPop: () async => !_isLoading,
+    return PopScope(
+      canPop: !_isLoading,
+      onPopInvokedWithResult: (bool didPop, dynamic result) async {},
       child: Scaffold(
+        backgroundColor: isDark ? Colors.grey[950] : Colors.grey[50],
         body: Stack(
           children: [
             // Background
@@ -133,7 +149,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                 decoration: BoxDecoration(
                   color: isDark ? Colors.grey[950] : Colors.grey[50],
                   image: DecorationImage(
-                    image: AssetImage('assets/loginbg.png'),
+                    image: const AssetImage('assets/loginbg.png'),
                     fit: BoxFit.cover,
                     colorFilter: ColorFilter.mode(
                       isDark
@@ -210,6 +226,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                 child: Material(
                   color: Colors.transparent,
                   child: InkWell(
+                    splashColor: Colors.white24,
+                    highlightColor: Colors.white10,
                     onTap:
                         _isLoading ? null : () => Navigator.of(context).pop(),
                     borderRadius: BorderRadius.circular(32),
@@ -218,8 +236,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                       width: 64,
                       alignment: Alignment.center,
                       child: HugeIcon(
-                        icon:
-                        HugeIcons.strokeRoundedArrowLeft01,
+                        icon: HugeIcons.strokeRoundedArrowLeft01,
                         color: _isLoading ? Colors.white54 : Colors.white,
                         size: 24,
                       ),
@@ -237,15 +254,15 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
   Widget _buildHeader() {
     return Column(
       children: [
-        HugeIcon(icon:
-          HugeIcons.strokeRoundedLockPassword,
+        HugeIcon(
+          icon: HugeIcons.strokeRoundedLockPassword,
           color: Colors.white,
           size: 48,
         ),
         const SizedBox(height: 24),
         Text(
           'Reset Password',
-          style: GoogleFonts.manrope(
+          style: GoogleFonts.montserrat(
             fontSize: 28,
             fontWeight: FontWeight.w600,
             color: Colors.white,
@@ -259,6 +276,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
             fontSize: 14,
             color: Colors.white70,
             height: 1.4,
+            fontWeight: FontWeight.w400,
           ),
           textAlign: TextAlign.center,
         ),
@@ -321,14 +339,40 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                 fontWeight: FontWeight.w400,
                 color: Colors.black.withOpacity(.4),
               ),
-              prefixIcon: HugeIcon(icon:HugeIcons.strokeRoundedMail01, size: 20),
-              prefixIconColor: MaterialStateColor.resolveWith(
-                (states) => states.contains(MaterialState.disabled)
-                    ? Colors.black26
-                    : Colors.black54,
+              prefixIcon: Padding(
+                // prefixIconConstraints below drops the default 48x48 min
+                // tap target, which also removed the leading inset that box
+                // used to provide — restore it explicitly so the icon isn't
+                // flush against the field's left edge.
+                padding: const EdgeInsets.only(left: 16),
+                child: HugeIcon(
+                  icon: HugeIcons.strokeRoundedMail01,
+                  // hugeicons' font-glyph icon (the version fullsuite ships)
+                  // bakes in a lot of internal padding around the glyph, while
+                  // this package's SVG path fills nearly the whole 24x24
+                  // viewBox — at the same nominal `size`, the SVG version's
+                  // visible ink renders ~2.3x larger, hence the smaller value.
+                  size: 21,
+                  strokeWidth: 1.0,
+                  // hugeicons' SvgPicture path bakes color into "#RRGGBB" and
+                  // drops alpha, so a translucent color like Colors.black54
+                  // renders fully opaque black instead of the intended gray —
+                  // use an already-opaque gray that matches the flattened tone.
+                  color:
+                      _isLoading ? const Color(0xFFC2C2C2) : Colors.grey[600],
+                ),
+              ),
+              // Without this, InputDecoration's default 48x48 minimum
+              // prefix-icon tap target clamps the icon's layout box back up
+              // to 48 regardless of HugeIcon's own `size`, silently
+              // overriding it — this is what let `size: 8.5` render
+              // identically to `size: 20` (both got forced up to 48).
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 0,
+                minHeight: 0,
               ),
               suffixIcon: _emailHasError
-                  ? Icon(Icons.error_outline, color: Colors.red, size: 20)
+                  ? const Icon(Icons.error_outline, color: Colors.red, size: 20)
                   : null,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -361,13 +405,16 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        HugeIcon(icon:HugeIcons.strokeRoundedAlertCircle,
-                            color: Colors.white, size: 18),
+                        HugeIcon(
+                          icon: HugeIcons.strokeRoundedAlertCircle,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             _errorMessage!,
-                            style: const TextStyle(
+                            style: GoogleFonts.manrope(
                               color: Colors.white,
                               fontSize: 12,
                               fontWeight: FontWeight.w400,
@@ -411,13 +458,9 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
                           ),
                         ),
                         const SizedBox(width: 12),
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
+                        LoadingAnimationWidget.staggeredDotsWave(
+                          color: Colors.white,
+                          size: 28,
                         ),
                       ],
                     )
@@ -445,15 +488,15 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
       ),
       child: Column(
         children: [
-          HugeIcon(icon:
-            HugeIcons.strokeRoundedCheckmarkCircle02,
+          HugeIcon(
+            icon: HugeIcons.strokeRoundedCheckmarkCircle02,
             color: Colors.green,
             size: 48,
           ),
           const SizedBox(height: 16),
           Text(
             'Email Sent!',
-            style: GoogleFonts.manrope(
+            style: GoogleFonts.montserrat(
               fontSize: 18,
               fontWeight: FontWeight.w600,
               color: Colors.white,
@@ -466,6 +509,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
               fontSize: 14,
               color: Colors.white70,
               height: 1.4,
+              fontWeight: FontWeight.w400,
             ),
             textAlign: TextAlign.center,
           ),

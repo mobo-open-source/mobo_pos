@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
 
+import '../core/utils/url_protocol_formatter.dart';
+
 /// A shared layout builder for all login-related screens, providing a consistent professional look.
 class LoginLayout extends StatelessWidget {
   final String title;
@@ -22,133 +24,143 @@ class LoginLayout extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      body: Stack(children: [
-        // Background
-        Positioned.fill(
-          child: Container(
-            decoration: BoxDecoration(
-              color: isDark ? Colors.grey[950] : Colors.grey[50],
-              image: DecorationImage(
-                image: AssetImage('assets/loginbg.png'),
-                fit: BoxFit.cover,
-                colorFilter: ColorFilter.mode(
-                  isDark ? Colors.black.withOpacity(1) : Colors.white.withOpacity(1),
-                  BlendMode.dstATop,
+      body: Stack(
+        children: [
+          // Background
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                color: isDark ? Colors.grey[950] : Colors.grey[50],
+                image: DecorationImage(
+                  image: AssetImage('assets/loginbg.png'),
+                  fit: BoxFit.cover,
+                  colorFilter: ColorFilter.mode(
+                    isDark
+                        ? Colors.black.withOpacity(1)
+                        : Colors.white.withOpacity(1),
+                    BlendMode.dstATop,
+                  ),
+                  onError: (exception, stackTrace) {
+                    // Fallback to solid color if image fails to load
+                  },
                 ),
-                onError: (exception, stackTrace) {
-                  // Fallback to solid color if image fails to load
-                },
               ),
             ),
           ),
-        ),
 
-        // Sales App text at the top
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 40),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Image.asset(
-                  'assets/pos-icon.png',
-                  width: 36,
-                  height: 36,
-                  fit: BoxFit.fitWidth,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Icon(
-                      Icons.business,
-                      color: Color(0xFFC03355),
-                      size: 24,
-                    );
-                  },
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'mobo POS',
-                  style: const TextStyle(
-                    fontFamily: 'YaroRg',
-                    color: Colors.white,
-                    fontSize: 24,
+          // Sales App text at the top
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 40),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Image.asset(
+                    'assets/pos-icon.png',
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.fitWidth,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Icon(
+                        Icons.business,
+                        color: Color(0xFFC03355),
+                        size: 24,
+                      );
+                    },
                   ),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Text(
+                    'mobo POS',
+                    style: const TextStyle(
+                      fontFamily: 'YaroRg',
+                      color: Colors.white,
+                      fontSize: 24,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
 
-        // Main content centered
-        SafeArea(
-          child: LayoutBuilder(
-            builder: (context, viewportConstraints) {
-              return SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0, vertical: 0.0),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: viewportConstraints.maxHeight),
-                  child: Align(
-                    alignment: const Alignment(0, -0.05),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 400),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          // Header section (Sign In title and subtitle only)
-                          const SizedBox(height: 40),
-                          _buildSignInHeader(),
-                          const SizedBox(height: 40),
+          // Main content centered
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (context, viewportConstraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 0.0,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: viewportConstraints.maxHeight,
+                    ),
+                    child: Align(
+                      alignment: const Alignment(0, -0.05),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 400),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            // Header section (Sign In title and subtitle only)
+                            const SizedBox(height: 40),
+                            _buildSignInHeader(),
+                            const SizedBox(height: 40),
 
-                          // Form section with consistent theme
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                            child: Theme(
-                              data: Theme.of(context).copyWith(
-                                inputDecorationTheme: Theme.of(context)
-                                    .inputDecorationTheme
-                                    .copyWith(
-                                      errorStyle: const TextStyle(
-                                        color: Colors.white,
-                                      ),
-                                      errorBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                        borderSide: BorderSide(
-                                          color: Colors.red[900]!,
-                                          width: 1.0,
-                                        ),
-                                      ),
-                                      focusedErrorBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                        borderSide: const BorderSide(
-                                          color: Colors.white,
-                                          width: 1.5,
-                                        ),
-                                      ),
-                                      enabledBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                        borderSide: BorderSide.none,
-                                      ),
-                                      focusedBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                        borderSide: BorderSide.none,
+                            // Form section with consistent theme
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24.0,
+                              ),
+                              child: Theme(
+                                data: Theme.of(context).copyWith(
+                                  inputDecorationTheme: Theme.of(
+                                    context,
+                                  ).inputDecorationTheme.copyWith(
+                                    errorStyle: const TextStyle(
+                                      color: Colors.white,
+                                    ),
+                                    errorBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide(
+                                        color: Colors.red[900]!,
+                                        width: 1.0,
                                       ),
                                     ),
+                                    focusedErrorBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: const BorderSide(
+                                        color: Colors.white,
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                  ),
+                                ),
+                                child: child,
                               ),
-                              child: child,
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
 
-        // Back button (if provided)
-        if (backButton != null) backButton!,
-      ]),
+          // Back button (if provided)
+          if (backButton != null) backButton!,
+        ],
+      ),
     );
   }
 
@@ -241,36 +253,35 @@ class LoginTextField extends StatelessWidget {
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: GoogleFonts.manrope(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: Colors.black.withOpacity(.4)),
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: Colors.black.withOpacity(.4),
+        ),
         prefixIcon: Padding(
           padding: const EdgeInsets.only(left: 16, right: 12),
-          child: HugeIcon(icon:  prefixIcon, size: 20),
+          child: HugeIcon(icon: prefixIcon, size: 20),
         ),
-        prefixIconConstraints: const BoxConstraints(
-          minWidth: 0,
-          minHeight: 0,
-        ),
+        prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
         prefixIconColor: MaterialStateColor.resolveWith(
-          (states) => states.contains(MaterialState.disabled)
-              ? Colors.black26
-              : Colors.black54,
+          (states) =>
+              states.contains(MaterialState.disabled)
+                  ? Colors.black26
+                  : Colors.black54,
         ),
-        suffixIcon: hasError
-            ? Icon(
-                Icons.error_outline,
-                color: Colors.red,
-                size: 20,
-              )
-            : suffixIcon,
+        suffixIcon:
+            hasError
+                ? Icon(Icons.error_outline, color: Colors.red, size: 20)
+                : suffixIcon,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
         ),
         filled: true,
         fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
       ),
     );
   }
@@ -320,7 +331,9 @@ class LoginDropdownField extends StatelessWidget {
           menuStyle: MenuStyle(
             shape: MaterialStateProperty.all(
               RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16), // Circular border radius
+                borderRadius: BorderRadius.circular(
+                  16,
+                ), // Circular border radius
               ),
             ),
             elevation: MaterialStateProperty.all(8),
@@ -331,25 +344,28 @@ class LoginDropdownField extends StatelessWidget {
       ),
       child: DropdownButtonFormField<String>(
         value: safeValue,
-        items: uniqueItems.map((String item) {
-          return DropdownMenuItem<String>(
-            value: item,
-            child: Text(
-              item,
-              style: GoogleFonts.manrope(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: Colors.black,
-              ),
-            ),
-          );
-        }).toList(),
+        items:
+            uniqueItems.map((String item) {
+              return DropdownMenuItem<String>(
+                value: item,
+                child: Text(
+                  item,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black,
+                  ),
+                ),
+              );
+            }).toList(),
         onChanged: onChanged,
         validator: validator,
         autovalidateMode: autovalidateMode,
         // Improved dropdown positioning and styling
         menuMaxHeight: 200, // Limit dropdown height
-        borderRadius: BorderRadius.circular(16), // Circular border radius for dropdown
+        borderRadius: BorderRadius.circular(
+          16,
+        ), // Circular border radius for dropdown
         dropdownColor: Colors.white,
         elevation: 8,
         // Custom icon with better positioning
@@ -363,42 +379,45 @@ class LoginDropdownField extends StatelessWidget {
         hint: Text(
           hint,
           style: GoogleFonts.manrope(
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
-              color: Colors.black.withOpacity(.4)),
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: Colors.black.withOpacity(.4),
+          ),
         ),
         decoration: InputDecoration(
           enabled: isEnabled,
           prefixIcon: Padding(
             padding: const EdgeInsets.only(left: 16, right: 12),
-            child: HugeIcon(
-              icon: HugeIcons.strokeRoundedDatabase,
-              size: 20,
-            ),
+            child: HugeIcon(icon: HugeIcons.strokeRoundedDatabase, size: 20),
           ),
           prefixIconConstraints: const BoxConstraints(
             minWidth: 0,
             minHeight: 0,
           ),
           prefixIconColor: MaterialStateColor.resolveWith(
-            (states) => states.contains(MaterialState.disabled)
-                ? Colors.black26
-                : Colors.black54,
+            (states) =>
+                states.contains(MaterialState.disabled)
+                    ? Colors.black26
+                    : Colors.black54,
           ),
-          suffixIcon: (hasError && (safeValue == null || safeValue.isEmpty))
-              ? HugeIcon(icon:
-                  HugeIcons.strokeRoundedAlertCircle,
-                  color: Colors.red[900],
-                  size: 20,
-                )
-              : null,
+          suffixIcon:
+              (hasError && (safeValue == null || safeValue.isEmpty))
+                  ? HugeIcon(
+                    icon: HugeIcons.strokeRoundedAlertCircle,
+                    color: Colors.red[900],
+                    size: 20,
+                  )
+                  : null,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
           ),
           filled: true,
           fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 16,
+          ),
         ),
       ),
     );
@@ -408,43 +427,44 @@ class LoginDropdownField extends StatelessWidget {
 class LoginErrorDisplay extends StatelessWidget {
   final String? error;
 
-  const LoginErrorDisplay({
-    super.key,
-    required this.error,
-  });
+  const LoginErrorDisplay({super.key, required this.error});
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 40,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 40),
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 320),
         switchInCurve: Curves.easeOut,
         switchOutCurve: Curves.easeIn,
-        child: error != null
-            ? Padding(
-          padding: const EdgeInsets.only(bottom: 8.0),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              HugeIcon(icon:HugeIcons.strokeRoundedAlertCircle,
-                  color: Colors.white, size: 18),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  error!,
-                  style: const TextStyle(
-                    fontFamily: 'Montserrat',
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
+        child:
+            error != null
+                ? Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      HugeIcon(
+                        icon: HugeIcons.strokeRoundedAlertCircle,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          error!,
+                          style: const TextStyle(
+                            fontFamily: 'Montserrat',
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ),
-            ],
-          ),
-        )
-            : const SizedBox.shrink(),
+                )
+                : const SizedBox.shrink(),
       ),
     );
   }
@@ -467,6 +487,13 @@ class LoginUrlTextField extends StatefulWidget {
   final ValueChanged<String>? onProtocolChanged;
   final List<String> urlHistory; // Add URL history parameter for suggestions
   final bool isLoading; // Add loading state parameter
+  /// Fired when a `http://`/`https://` prefix is typed or pasted into the
+  /// field, so the caller can move it into the protocol dropdown.
+  final ValueChanged<String>? onProtocolDetected;
+
+  /// Fired with the full (protocol-prefixed) URL when a history suggestion is
+  /// tapped, so the caller can restore any details saved alongside it.
+  final ValueChanged<String>? onHistorySelected;
 
   const LoginUrlTextField({
     super.key,
@@ -484,6 +511,8 @@ class LoginUrlTextField extends StatefulWidget {
     this.onProtocolChanged,
     this.urlHistory = const [], // Default empty list
     this.isLoading = false, // Default not loading
+    this.onProtocolDetected,
+    this.onHistorySelected,
   });
 
   @override
@@ -501,16 +530,18 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
     super.initState();
     _focusNode = widget.focusNode ?? FocusNode();
     _focusNode.addListener(_onFocusChange);
+    widget.controller.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onTextChanged);
     // Remove overlay entry without calling setState
     if (_overlayEntry != null) {
       _overlayEntry!.remove();
       _overlayEntry = null;
     }
-     
+
     // Clean up focus node
     if (widget.focusNode == null) {
       _focusNode.dispose();
@@ -520,17 +551,44 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
     super.dispose();
   }
 
+  /// History entries that still contain the current input, excluding an
+  /// exact match (once the field holds a full address, that history entry
+  /// is no longer a "suggestion") — otherwise every entry stays listed
+  /// regardless of what's already been typed.
+  List<String> _matchingSuggestions() {
+    final input = widget.controller.text.trim().toLowerCase();
+    if (input.isEmpty) return widget.urlHistory;
+    return widget.urlHistory.where((url) {
+      final normalized =
+          url.replaceFirst(RegExp(r'^https?://'), '').toLowerCase();
+      return normalized.contains(input) && normalized != input;
+    }).toList();
+  }
+
   void _onFocusChange() {
-    if (_focusNode.hasFocus && widget.urlHistory.isNotEmpty && widget.enabled) {
+    if (_focusNode.hasFocus &&
+        widget.enabled &&
+        _matchingSuggestions().isNotEmpty) {
       _showHistoryDropdown();
     } else {
       _hideDropdown();
     }
   }
 
+  void _onTextChanged() {
+    if (!_focusNode.hasFocus) return;
+    if (_matchingSuggestions().isEmpty) {
+      _hideDropdown();
+    } else if (_overlayEntry != null) {
+      _overlayEntry!.markNeedsBuild();
+    } else if (widget.enabled) {
+      _showHistoryDropdown();
+    }
+  }
+
   void _showHistoryDropdown() {
     if (_overlayEntry != null) return;
-    
+
     _overlayEntry = _createOverlayEntry();
     Overlay.of(context).insert(_overlayEntry!);
     setState(() {
@@ -553,81 +611,82 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
   OverlayEntry _createOverlayEntry() {
     RenderBox renderBox = context.findRenderObject() as RenderBox;
     var size = renderBox.size;
-    
+
     return OverlayEntry(
-      builder: (context) => Positioned(
-        width: size.width,
-        child: CompositedTransformFollower(
-          link: _layerLink,
-          showWhenUnlinked: false,
-          offset: Offset(0.0, size.height + 4),
-          child: Material(
-            elevation: 8,
-            borderRadius: BorderRadius.circular(12),
-            color: Colors.white,
-            child: Container(
-              constraints: const BoxConstraints(
-                maxHeight: 200,
-              ),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Colors.black.withOpacity(0.1),
-                  width: 1,
+      builder: (context) {
+        final suggestions = _matchingSuggestions();
+        return Positioned(
+          width: size.width,
+          child: CompositedTransformFollower(
+            link: _layerLink,
+            showWhenUnlinked: false,
+            offset: Offset(0.0, size.height + 4),
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(12),
+              color: Colors.white,
+              child: Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.black.withOpacity(0.1),
+                    width: 1,
+                  ),
                 ),
-              ),
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                shrinkWrap: true,
-                itemCount: widget.urlHistory.length,
-                itemBuilder: (context, index) {
-                  final url = widget.urlHistory[index];
-                  String displayUrl = url;
-                  if (url.startsWith('https://')) {
-                    displayUrl = url.substring(8);
-                  } else if (url.startsWith('http://')) {
-                    displayUrl = url.substring(7);
-                  }
-                  
-                  return InkWell(
-                    onTap: () {
-                      _selectUrl(url);
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.history,
-                            size: 16,
-                            color: Colors.black54,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              displayUrl,
-                              style: GoogleFonts.manrope(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w400,
-                                color: Colors.black87,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                child: ListView.builder(
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  itemCount: suggestions.length,
+                  itemBuilder: (context, index) {
+                    final url = suggestions[index];
+                    String displayUrl = url;
+                    if (url.startsWith('https://')) {
+                      displayUrl = url.substring(8);
+                    } else if (url.startsWith('http://')) {
+                      displayUrl = url.substring(7);
+                    }
+
+                    return InkWell(
+                      onTap: () {
+                        _selectUrl(url);
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.history,
+                              size: 16,
+                              color: Colors.black54,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                displayUrl,
+                                style: GoogleFonts.manrope(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black87,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -635,7 +694,7 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
     // Extract protocol and clean URL
     String protocol = 'https://';
     String cleanUrl = selectedUrl;
-    
+
     if (selectedUrl.startsWith('https://')) {
       protocol = 'https://';
       cleanUrl = selectedUrl.substring(8);
@@ -643,15 +702,16 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
       protocol = 'http://';
       cleanUrl = selectedUrl.substring(7);
     }
-    
+
     // Hide dropdown first
     _hideDropdown();
-    
+
     // Update protocol and URL
     widget.onProtocolChanged?.call(protocol);
     widget.controller.text = cleanUrl;
     widget.onChanged?.call(cleanUrl);
-    
+    widget.onHistorySelected?.call(selectedUrl);
+
     // Remove focus after a short delay to ensure dropdown is hidden
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) {
@@ -660,15 +720,14 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
     });
   }
 
-
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         CompositedTransformTarget(
-            link: _layerLink,
-            child: TextFormField(
+          link: _layerLink,
+          child: TextFormField(
             cursorColor: Colors.black,
             style: GoogleFonts.manrope(
               fontSize: 14,
@@ -682,20 +741,29 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
             validator: widget.validator,
             autovalidateMode: widget.autovalidateMode,
             onChanged: widget.onChanged,
+            inputFormatters:
+                widget.onProtocolDetected == null
+                    ? null
+                    : [
+                      UrlProtocolFormatter(
+                        onProtocolDetected: widget.onProtocolDetected!,
+                      ),
+                    ],
             decoration: InputDecoration(
               hintText: widget.hint,
               hintStyle: GoogleFonts.manrope(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black.withOpacity(.4)),
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: Colors.black.withOpacity(.4),
+              ),
               prefixIcon: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Server icon
                   Padding(
                     padding: const EdgeInsets.only(left: 12, right: 8),
-                    child: HugeIcon(icon: 
-                      widget.prefixIcon,
+                    child: HugeIcon(
+                      icon: widget.prefixIcon,
                       size: 20,
                       color: widget.enabled ? Colors.black54 : Colors.black26,
                     ),
@@ -722,20 +790,25 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
                         minWidth: 72,
                         maxWidth: 72,
                       ),
-                      itemBuilder: (context) => ['http://', 'https://']
-                          .map((p) => PopupMenuItem<String>(
-                                value: p,
-                                child: Text(
-                                  p,
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                              ))
-                          .toList(),
-                      onSelected: (value) => widget.onProtocolChanged?.call(value),
+                      itemBuilder:
+                          (context) =>
+                              ['http://', 'https://']
+                                  .map(
+                                    (p) => PopupMenuItem<String>(
+                                      value: p,
+                                      child: Text(
+                                        p,
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                      onSelected:
+                          (value) => widget.onProtocolChanged?.call(value),
                       child: Container(
                         height: 48, // Match the input field height
                         width: 85, // Fixed width
@@ -751,7 +824,10 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
                                 style: GoogleFonts.manrope(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
-                                  color: widget.enabled ? Colors.black : Colors.black26,
+                                  color:
+                                      widget.enabled
+                                          ? Colors.black
+                                          : Colors.black26,
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -760,7 +836,10 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
                             Icon(
                               Icons.keyboard_arrow_down,
                               size: 20,
-                              color: widget.enabled ? Colors.black54 : Colors.black26,
+                              color:
+                                  widget.enabled
+                                      ? Colors.black54
+                                      : Colors.black26,
                             ),
                           ],
                         ),
@@ -786,14 +865,18 @@ class _LoginUrlTextFieldState extends State<LoginUrlTextField> {
                         height: 16,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.black54),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.black54,
+                          ),
                         ),
                       ),
                     )
                   // Show dropdown indicator when history is available and not loading
                   else if (widget.urlHistory.isNotEmpty && widget.enabled)
                     Icon(
-                      _showDropdown ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                      _showDropdown
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
                       size: 20,
                       color: Colors.black54,
                     ),
@@ -863,13 +946,14 @@ class LoginButton extends StatelessWidget {
   Widget build(BuildContext context) {
     // Determine if button should be interactive
     final bool isInteractive = isEnabled && !isLoading && onPressed != null;
-    
+
     return SizedBox(
       height: 48,
       child: ElevatedButton(
         onPressed: isInteractive ? onPressed : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor: isInteractive ? Colors.black : Colors.black.withOpacity(0.3),
+          backgroundColor:
+              isInteractive ? Colors.black : Colors.black.withOpacity(0.3),
           foregroundColor: Colors.white,
           disabledBackgroundColor: Colors.black.withOpacity(0.2),
           disabledForegroundColor: Colors.white,
@@ -880,16 +964,17 @@ class LoginButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
           ),
         ),
-        child: isLoading && loadingWidget != null
-            ? loadingWidget!
-            : Text(
-                text,
-                style: GoogleFonts.manrope(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white, // Keep text always white/full opacity
+        child:
+            isLoading && loadingWidget != null
+                ? loadingWidget!
+                : Text(
+                  text,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white, // Keep text always white/full opacity
+                  ),
                 ),
-              ),
       ),
     );
   }

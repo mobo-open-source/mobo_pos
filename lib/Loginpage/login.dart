@@ -1,17 +1,17 @@
+import 'package:mobo_pos/services/database_expiry.dart';
+import '../core/image_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:mobo_pos/Loginpage/server_setup_screen.dart';
-import 'package:mobo_pos/Loginpage/user_login_screen.dart';
 import 'package:mobo_pos/Loginpage/login_layout.dart';
 import 'package:mobo_pos/Loginpage/reset_password_screen.dart';
+import 'package:mobo_pos/Loginpage/two_factor_authentication.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
-import 'package:provider/provider.dart';
-import 'package:mobo_pos/odoo_webapp/webapp.dart';
+import 'package:mobo_pos/services/auth_service.dart';
 import 'package:mobo_pos/services/review_service.dart';
-import 'package:mobo_pos/services/storage_service.dart';
 
 /// The primary login page supporting username and password authentication against an Odoo server.
 class LoginPage extends StatefulWidget {
@@ -319,58 +319,45 @@ class _LoginPageState extends State<LoginPage> {
 
 
       if (session != null && session.userId != null && session.userId! > 0) {
-        final prefs = await SharedPreferences.getInstance();
-        
-        
-        // Save all required authentication data for POS backend
-        await prefs.setString('lastUrl', serverUrl);
-        await prefs.setString('lastUsername', _usernameController.text.trim());
-        await prefs.setString('lastDatabase', database);
-        await prefs.setBool('isLoggedIn', true);
-        await prefs.setString('session_id', session.id);
-        await prefs.setString('uri', serverUrl);
-        await prefs.setString('database', database);
-        
-        // Additional POS-specific data (matching backend expectations exactly)
-        await prefs.setString('serverUrl', serverUrl);
-        await prefs.setString('dbName', database);
-        await prefs.setString('userId', session.userId!.toString());
-        await prefs.setString('sessionId', session.id);
-        await prefs.setString('username', _usernameController.text.trim());
-        await prefs.setString('userLogin', session.userLogin ?? _usernameController.text.trim());
-        await prefs.setString('userName', session.userName ?? _usernameController.text.trim());
-        await prefs.setString('password', _passwordController.text.trim());
-        
-        // Additional session data that might be needed
-        await prefs.setString('partnerId', session.partnerId?.toString() ?? '0');
-        await prefs.setString('userLang', session.userLang ?? 'en_US');
-        await prefs.setString('userTz', session.userTz ?? 'UTC');
-        await prefs.setBool('isSystem', session.isSystem ?? false);
-        await prefs.setString('serverVersion', session.serverVersion ?? '');
-        await prefs.setString('companyId', session.companyId?.toString() ?? '1');
-        
-        // Verify data was saved correctly
-        final savedDbName = prefs.getString('dbName');
-        final savedUserId = prefs.getString('userId');
+        // Fetch the profile photo so it's available for this account's
+        // entry in the switch-accounts list, which reads it from storage
+        // rather than the live server (unlike the top profile card, which
+        // always fetches fresh) — without this, a freshly logged-in
+        // account would show a blank/generic avatar there.
+        String imageBase64 = '';
+        try {
+          final imageResponse = await client!.callKw({
+            'model': 'res.users',
+            'method': 'read',
+            'args': [
+              [session.userId],
+              ['image_1920'],
+            ],
+            'kwargs': {},
+          });
+          if (imageResponse.isNotEmpty &&
+              ImageUtils.base64Of(imageResponse[0]['image_1920']).isNotEmpty) {
+            imageBase64 = ImageUtils.base64Of(imageResponse[0]['image_1920']);
+          }
+        } catch (e) {}
 
-        // Save account for switching
-        final storageService = StorageService();
-        await storageService.saveAccount({
-          'username': session.userName ?? _usernameController.text.trim(),
-          'userLogin': session.userLogin ?? _usernameController.text.trim(),
-          'userId': session.userId,
-          'sessionId': session.id,
-          'serverVersion': session.serverVersion ?? '',
-          'userLang': session.userLang ?? 'en_US',
-          'partnerId': session.partnerId ?? 0,
-          'userTimezone': session.userTz ?? 'UTC',
-          'companyId': session.companyId ?? 1,
-          'isSystem': session.isSystem ?? false,
-          'uri': serverUrl,
-          'dbName': database,
-          'password': _passwordController.text.trim(),
-          'image': '', // Image not fetched here easily
-        });
+        await AuthService().saveAuthenticatedSession(
+          url: serverUrl,
+          database: database,
+          username: _usernameController.text.trim(),
+          password: _passwordController.text.trim(),
+          sessionId: session.id,
+          userId: session.userId,
+          userLogin: session.userLogin,
+          userName: session.userName,
+          partnerId: session.partnerId,
+          userLang: session.userLang,
+          userTz: session.userTz,
+          isSystem: session.isSystem ?? false,
+          serverVersion: session.serverVersion,
+          companyId: session.companyId,
+          imageBase64: imageBase64,
+        );
 
         // Track significant event: Successful Login
         ReviewService().trackSignificantEvent();
@@ -385,9 +372,47 @@ class _LoginPageState extends State<LoginPage> {
           _submitted = false;
         });
       }
-    } catch (e) {
+    } on DatabaseExpiredException {
       setState(() {
-        _errorMessage = _parseLoginError(e.toString());
+        _errorMessage = DatabaseExpiredException.message;
+        _isLoading = false;
+        _submitted = false;
+      });
+    } catch (e) {
+      final formatted = _parseLoginError(e.toString());
+      if (formatted == AuthService.genericLoginFailureMessage) {
+        // This error didn't match any recognized failure pattern, so it's
+        // being treated as "this account likely has 2FA enabled" and routed
+        // to TwoFactorAuthPage instead of shown as an error. That's a
+        // heuristic guess, not a real 2FA check — log the raw error so a
+        // false positive (a real, unclassified failure) can be diagnosed
+        // instead of silently masked by the 2FA screen.
+        debugPrint('Login: unrecognized failure, assuming 2FA — raw error: $e');
+        setState(() {
+          _isLoading = false;
+          _submitted = false;
+        });
+        if (!mounted) return;
+        final result = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => TwoFactorAuthPage(
+              serverUrl: serverUrl,
+              database: database,
+              username: _usernameController.text.trim(),
+              password: _passwordController.text.trim(),
+              onSuccessRouteName: '/backend',
+            ),
+          ),
+        );
+        if (result == false && mounted) {
+          setState(() {
+            _errorMessage = null;
+          });
+        }
+        return;
+      }
+      setState(() {
+        _errorMessage = formatted;
         _isLoading = false;
         _submitted = false;
       });
@@ -398,9 +423,18 @@ class _LoginPageState extends State<LoginPage> {
   /// Converts Odoo-specific error strings into user-friendly localized error messages.
   String _parseLoginError(String error) {
     final errorLower = error.toLowerCase();
-    
+
+    // A Runbot test server can block API access to a given database from
+    // the caller's network location (e.g. the shared "-all" database),
+    // returning an error that has nothing to do with credentials or 2FA.
+    // Recognize it explicitly so it isn't swallowed by the generic
+    // fallback below and mistaken for "this account needs 2FA".
+    if (errorLower.contains('runbot')) {
+      return 'This Runbot database is not accessible from your current network location. Please use a development database or contact the Runbot team.';
+    }
+
     // Check for common authentication errors
-    if (errorLower.contains('access denied') || 
+    if (errorLower.contains('access denied') ||
         errorLower.contains('invalid login') ||
         errorLower.contains('authentication failed') ||
         errorLower.contains('wrong login/password') ||
@@ -410,6 +444,9 @@ class _LoginPageState extends State<LoginPage> {
     }
     
     // Check for database errors
+    if (errorLower.contains('database_manager_disabled')) {
+      return 'Database listing is disabled (list_db=false). Cannot fetch databases automatically.';
+    }
     if (errorLower.contains('database') && errorLower.contains('not found')) {
       return 'Database not found. Please check your server configuration.';
     }

@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
-/// Service for handling Odoo account password resets via web forms and JSON-RPC.
+/// Service for handling Odoo account password resets via the web login flow.
 class ResetPasswordService {
   /// Sends a reset password email for the specified login on the given Odoo server and database.
   static Future<Map<String, dynamic>> sendResetPasswordEmail({
@@ -10,19 +10,7 @@ class ResetPasswordService {
     required String database,
     required String login,
   }) async {
-    // Fail-fast validation as expected by tests
-    if (!isValidUrl(serverUrl)) {
-      throw Exception('Invalid server URL format');
-    }
-    if (!isValidEmail(login)) {
-      throw Exception('Invalid email format');
-    }
-    if (database.isEmpty) {
-      throw Exception('Database name cannot be empty');
-    }
-
     try {
-      // Clean the server URL
       String cleanUrl = serverUrl.trim();
       if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
         cleanUrl = 'https://$cleanUrl';
@@ -31,35 +19,31 @@ class ResetPasswordService {
         cleanUrl = cleanUrl.substring(0, cleanUrl.length - 1);
       }
 
+      final webFlowResult = await _tryWebInterfaceReset(
+        cleanUrl,
+        database,
+        login,
+      );
 
-      // Prefer the professional, browser-aligned flow first.
-      // This mirrors how Odoo handles the reset in the web UI and is the most reliable.
-      final webFlowResult = await _tryWebInterfaceReset(cleanUrl, database, login);
-      // If the web flow succeeded or requires a WebView (recaptcha/routing), return immediately.
-      if (webFlowResult['success'] == true || webFlowResult['requiresWebView'] == true) {
+      if (webFlowResult['success'] == true) {
         return webFlowResult;
       }
 
-      // Try multiple possible reset password endpoints
       final possibleEndpoints = [
         '/web/reset_password',
-        '/auth_signup/reset_password', 
+        '/auth_signup/reset_password',
         '/web/signup',
         '/web/database/reset_password',
         '/auth_signup/signup',
       ];
 
-      http.Response? getResponse;
       String? workingEndpoint;
       String? responseBody;
       Map<String, String>? cookies;
       bool requiresRecaptcha = false;
 
-      // Step 1: Find a working reset password endpoint
       for (final endpoint in possibleEndpoints) {
-        final testUrl = '$cleanUrl$endpoint';
         try {
-
           final response = await http.get(
             Uri.parse('$cleanUrl$endpoint?db=$database'),
             headers: {
@@ -69,42 +53,37 @@ class ResetPasswordService {
                   'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
               'Accept-Language': 'en-US,en;q=0.5',
             },
-          ).timeout(Duration(seconds: 10));
-
+          ).timeout(const Duration(seconds: 10));
 
           if (response.statusCode == 200) {
-            // Check if this is actually a reset password form
             final body = response.body.toLowerCase();
-            
-            // More specific checks to avoid website error pages
+
             bool isValidResetForm = false;
-            
-            if (body.contains('password') && (body.contains('reset') || body.contains('forgot'))) {
-              // Make sure it's not an error page
-              if (!body.contains('400 |') && !body.contains('404 |') && !body.contains('error')) {
-                // Check for form elements that indicate a real reset form
-                if (body.contains('<form') && 
-                    (body.contains('name="login"') || body.contains('type="email"'))) {
+
+            if (body.contains('password') &&
+                (body.contains('reset') || body.contains('forgot'))) {
+              if (!body.contains('400 |') &&
+                  !body.contains('404 |') &&
+                  !body.contains('error')) {
+                if (body.contains('<form') &&
+                    (body.contains('name="login"') ||
+                        body.contains('type="email"'))) {
                   isValidResetForm = true;
                 }
               }
             }
-            
+
             if (isValidResetForm) {
               workingEndpoint = endpoint;
               responseBody = response.body;
 
-              // Check for reCAPTCHA presence
               requiresRecaptcha = _detectRecaptcha(response.body);
 
-              // Extract cookies
               final cookieHeader = response.headers['set-cookie'];
               if (cookieHeader != null) {
                 cookies = _parseCookies(cookieHeader);
               }
-
               break;
-            } else {
             }
           }
         } catch (e) {
@@ -113,32 +92,23 @@ class ResetPasswordService {
       }
 
       if (workingEndpoint == null) {
-        
-        // Try direct API call to Odoo's JSON-RPC endpoint for password reset
         return await _tryDirectApiReset(cleanUrl, database, login);
       }
 
-      // If reCAPTCHA is detected, return WebView requirement
       if (requiresRecaptcha) {
-        final webViewUrl = '$cleanUrl$workingEndpoint?db=$database';
         return {
           'success': false,
-          'requiresWebView': true,
-          'webViewUrl': webViewUrl,
           'message':
-              'This server requires additional security verification. Please complete the reset in the secure browser.',
+              'Unable to reset automatically due to server security (reCAPTCHA). Please try again later or contact your administrator.',
         };
       }
 
+      final Map<String, String> formData = _extractAllFormData(
+        responseBody!,
+        login,
+        database,
+      );
 
-      // Extract all form data from the HTML response
-      final Map<String, String> formData = _extractAllFormData(responseBody!, login, database);
-      
-
-
-      // Step 3: Try multiple approaches to handle different Odoo configurations
-
-      // Approach 1: Standard form submission
       final headers = {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent':
@@ -156,7 +126,6 @@ class ResetPasswordService {
         headers['Cookie'] = cookies.values.join('; ');
       }
 
-      // First attempt with current form data - use proper form encoding
       var response = await http
           .post(
             Uri.parse('$cleanUrl$workingEndpoint'),
@@ -165,11 +134,7 @@ class ResetPasswordService {
           )
           .timeout(const Duration(seconds: 30));
 
-
-      // If 400 error, try different approaches
       if (response.statusCode == 400) {
-
-        // Approach 2: Try without any tokens
         final simpleFormData = {
           'login': login,
           if (database.isNotEmpty) 'db': database,
@@ -184,53 +149,36 @@ class ResetPasswordService {
             )
             .timeout(const Duration(seconds: 30));
 
-
-        // If still 400, try with database in URL instead of form data
         if (response.statusCode == 400 && database.isNotEmpty) {
           final urlWithDb = '$cleanUrl$workingEndpoint?db=$database';
           final formDataWithoutDb = Map<String, String>.from(formData);
-          formDataWithoutDb.remove('db'); // Remove db from form data since it's in URL
+          formDataWithoutDb.remove('db');
 
           response = await http
               .post(
                 Uri.parse(urlWithDb),
-                headers: {
-                  ...headers,
-                  'Referer': urlWithDb,
-                },
+                headers: {...headers, 'Referer': urlWithDb},
                 body: Uri(queryParameters: formDataWithoutDb).query,
               )
               .timeout(const Duration(seconds: 30));
 
-          
-          // If still 400, try a minimal approach with just login and db
           if (response.statusCode == 400) {
-            final minimalData = {
-              'login': login,
-            };
-            
+            final minimalData = {'login': login};
+
             response = await http
                 .post(
                   Uri.parse(urlWithDb),
-                  headers: {
-                    ...headers,
-                    'Referer': urlWithDb,
-                  },
+                  headers: {...headers, 'Referer': urlWithDb},
                   body: Uri(queryParameters: minimalData).query,
                 )
                 .timeout(const Duration(seconds: 30));
-
           }
         }
       }
 
-      // Log response headers for debugging
-
-      // Check for redirect (common in successful form submissions)
       if (response.statusCode == 302 || response.statusCode == 303) {
         final location = response.headers['location'];
 
-        // Follow redirect to get the final response
         if (location != null) {
           try {
             final redirectUrl =
@@ -247,8 +195,6 @@ class ResetPasswordService {
               },
             ).timeout(const Duration(seconds: 30));
 
-
-            // Check the final page for success/error indicators
             final responseBody = redirectResponse.body.toLowerCase();
             if (_containsSuccessIndicators(responseBody)) {
               return {
@@ -262,11 +208,12 @@ class ResetPasswordService {
                 'message': 'User not found or invalid email address.',
               };
             }
-          } catch (e) {
+          } catch (_) {
+            // Following the redirect is best-effort; on failure fall through
+            // to the generic result below.
           }
         }
 
-        // Assume success for redirects (common pattern in Odoo)
         return {
           'success': true,
           'message':
@@ -275,7 +222,6 @@ class ResetPasswordService {
       }
 
       if (response.statusCode == 200) {
-        // Check if the response contains success indicators
         final responseBody = response.body.toLowerCase();
 
         if (_containsSuccessIndicators(responseBody)) {
@@ -290,7 +236,6 @@ class ResetPasswordService {
             'message': 'User not found or invalid email address.',
           };
         } else {
-          // Check if we're still on the reset password form (indicates error)
           if (responseBody.contains('<form') &&
               responseBody.contains('reset') &&
               responseBody.contains('password')) {
@@ -301,7 +246,6 @@ class ResetPasswordService {
             };
           }
 
-          // Assume success if no error indicators found
           return {
             'success': true,
             'message':
@@ -309,9 +253,6 @@ class ResetPasswordService {
           };
         }
       } else if (response.statusCode == 400) {
-        
-        // Log the full response body for debugging
-        
         final errorBody = response.body.toLowerCase();
         if (errorBody.contains('user not found') ||
             errorBody.contains('no user found')) {
@@ -385,69 +326,42 @@ class ResetPasswordService {
   }
 
   /// Validate email format
-  /// Validates the format of an email address.
   static bool isValidEmail(String email) {
-    if (email.trim().isEmpty) return false;
-    // Standard email regex that is more robust
-    final regExp = RegExp(r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,253}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,253}[a-zA-Z0-9])?)*$");
-    
-    // Support localhost for development
-    if (email.contains('@localhost')) {
-      return true;
-    }
-    
-    return regExp.hasMatch(email);
-  }
-
-  /// Validate server URL format
-  /// Validates the format and scheme of a server URL.
-  static bool isValidUrl(String url) {
-    if (url.trim().isEmpty) return false;
-    try {
-      final uri = Uri.parse(url);
-      // Require explicit scheme and authority for "validity" in this context
-      // to avoid accidental misconfigurations.
-      return uri.hasScheme && 
-             (uri.scheme == 'http' || uri.scheme == 'https') && 
-             uri.hasAuthority && 
-             uri.host.isNotEmpty;
-    } catch (e) {
-      return false;
-    }
+    return RegExp(
+      r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+    ).hasMatch(email);
   }
 
   /// Extract all form data from HTML response including hidden fields
-  static Map<String, String> _extractAllFormData(String html, String login, String database) {
+  static Map<String, String> _extractAllFormData(
+    String html,
+    String login,
+    String database,
+  ) {
     final Map<String, String> formData = {};
-    
-    // Add the login (email) - this is always required
+
     formData['login'] = login;
-    
-    // Add database if provided
+
     if (database.isNotEmpty) {
       formData['db'] = database;
     }
-    
-    // Add redirect parameter
+
     formData['redirect'] = '/web/login';
-    
-    // Extract all input fields from the form
+
     final inputPattern = RegExp(
       r'<input[^>]*name=["\x27]([^"\x27]+)["\x27][^>]*(?:value=["\x27]([^"\x27]*)["\x27])?[^>]*>',
       caseSensitive: false,
     );
-    
+
     final matches = inputPattern.allMatches(html);
     for (final match in matches) {
       final name = match.group(1);
       final value = match.group(2) ?? '';
-      
+
       if (name != null && name.isNotEmpty) {
-        // Skip login field as we're setting it manually
         if (name.toLowerCase() == 'login') continue;
-        
-        // Include important fields like tokens, csrf, etc.
-        if (name.toLowerCase().contains('token') || 
+
+        if (name.toLowerCase().contains('token') ||
             name.toLowerCase().contains('csrf') ||
             name.toLowerCase() == 'db' ||
             name.toLowerCase() == 'redirect') {
@@ -455,8 +369,7 @@ class ResetPasswordService {
         }
       }
     }
-    
-    // Also try to extract CSRF token from meta tags
+
     final metaCsrfPattern = RegExp(
       r'<meta[^>]*name=["\x27]csrf-token["\x27][^>]*content=["\x27]([^"\x27]*)["\x27]',
       caseSensitive: false,
@@ -465,39 +378,49 @@ class ResetPasswordService {
     if (metaMatch != null && metaMatch.group(1) != null) {
       formData['csrf_token'] = metaMatch.group(1)!;
     }
-    
-    // Extract JavaScript variables for tokens
+
     final jsTokenPatterns = [
-      RegExp(r'csrf_token["\x27]?\s*:\s*["\x27]([^"\x27]+)["\x27]', caseSensitive: false),
+      RegExp(
+        r'csrf_token["\x27]?\s*:\s*["\x27]([^"\x27]+)["\x27]',
+        caseSensitive: false,
+      ),
       RegExp(r'"csrf_token"\s*:\s*"([^"]+)"', caseSensitive: false),
-      RegExp(r'var\s+csrf_token\s*=\s*["\x27]([^"\x27]+)["\x27]', caseSensitive: false),
+      RegExp(
+        r'var\s+csrf_token\s*=\s*["\x27]([^"\x27]+)["\x27]',
+        caseSensitive: false,
+      ),
     ];
-    
+
     for (final pattern in jsTokenPatterns) {
       final match = pattern.firstMatch(html);
-      if (match != null && match.group(1) != null && match.group(1)!.isNotEmpty) {
+      if (match != null &&
+          match.group(1) != null &&
+          match.group(1)!.isNotEmpty) {
         formData['csrf_token'] = match.group(1)!;
         break;
       }
     }
-    
+
     return formData;
   }
-  
+
   /// Extract CSRF token from HTML response
   static String? _extractCsrfToken(String html) {
-    // Look for CSRF token in various common patterns
     final patterns = [
       RegExp(
-          r'<input[^>]*name=["\x27]csrf_token["\x27][^>]*value=["\x27]([^"\x27]*)["\x27]'),
+        r'<input[^>]*name=["\x27]csrf_token["\x27][^>]*value=["\x27]([^"\x27]*)["\x27]',
+      ),
       RegExp(
-          r'<meta[^>]*name=["\x27]csrf-token["\x27][^>]*content=["\x27]([^"\x27]*)["\x27]'),
+        r'<meta[^>]*name=["\x27]csrf-token["\x27][^>]*content=["\x27]([^"\x27]*)["\x27]',
+      ),
       RegExp(r'csrf_token["\x27]?\s*:\s*["\x27]([^"\x27]*)'),
       RegExp(r'"csrf_token"\s*:\s*"([^"]*)"'),
       RegExp(
-          r'name=["\x27]csrf_token["\x27]\s+value=["\x27]([^"\x27]*)["\x27]'),
+        r'name=["\x27]csrf_token["\x27]\s+value=["\x27]([^"\x27]*)["\x27]',
+      ),
       RegExp(
-          r'value=["\x27]([^"\x27]*)["\x27]\s+name=["\x27]csrf_token["\x27]'),
+        r'value=["\x27]([^"\x27]*)["\x27]\s+name=["\x27]csrf_token["\x27]',
+      ),
     ];
 
     for (final pattern in patterns) {
@@ -507,56 +430,6 @@ class ResetPasswordService {
           match.group(1)!.isNotEmpty) {
         return match.group(1);
       }
-    }
-
-    return null;
-  }
-
-  /// Extract token value from HTML response (specific to Odoo reset password form)
-  static String? _extractTokenValue(String html) {
-    // Look for token field with value - try multiple patterns
-    final patterns = [
-      // Standard input with value attribute
-      RegExp(
-          r'<input[^>]*name=["\x27]token["\x27][^>]*value=["\x27]([^"\x27]*)["\x27]',
-          caseSensitive: false),
-      RegExp(
-          r'<input[^>]*value=["\x27]([^"\x27]*)["\x27][^>]*name=["\x27]token["\x27]',
-          caseSensitive: false),
-
-      // Hidden input variations
-      RegExp(
-          r'<input[^>]*type=["\x27]hidden["\x27][^>]*name=["\x27]token["\x27][^>]*value=["\x27]([^"\x27]*)["\x27]',
-          caseSensitive: false),
-      RegExp(
-          r'<input[^>]*name=["\x27]token["\x27][^>]*type=["\x27]hidden["\x27][^>]*value=["\x27]([^"\x27]*)["\x27]',
-          caseSensitive: false),
-
-      // JavaScript variable patterns
-      RegExp(r'token["\x27]?\s*:\s*["\x27]([^"\x27]+)["\x27]',
-          caseSensitive: false),
-      RegExp(r'var\s+token\s*=\s*["\x27]([^"\x27]+)["\x27]',
-          caseSensitive: false),
-
-      // Form data patterns
-      RegExp(r'name=["\x27]token["\x27][^>]*value=["\x27]([^"\x27]*)["\x27]',
-          caseSensitive: false),
-    ];
-
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(html);
-      if (match != null &&
-          match.group(1) != null &&
-          match.group(1)!.isNotEmpty) {
-        return match.group(1);
-      }
-    }
-
-    // If no value found, check if token field exists but is empty
-    if (html.toLowerCase().contains('name="token"') ||
-        html.toLowerCase().contains("name='token'")) {
-      // Return null instead of empty string to indicate we shouldn't include this field
-      return null;
     }
 
     return null;
@@ -566,7 +439,6 @@ class ResetPasswordService {
   static bool _detectRecaptcha(String responseBody) {
     final body = responseBody.toLowerCase();
 
-    // Check for various reCAPTCHA indicators
     final recaptchaIndicators = [
       'recaptcha',
       'grecaptcha',
@@ -586,12 +458,14 @@ class ResetPasswordService {
   }
 
   /// Try direct API call to Odoo's public signup endpoint
-  static Future<Map<String, dynamic>> _tryDirectApiReset(String cleanUrl, String database, String login) async {
+  static Future<Map<String, dynamic>> _tryDirectApiReset(
+    String cleanUrl,
+    String database,
+    String login,
+  ) async {
     try {
-      
-      // Try the public signup endpoint which doesn't require authentication
       final signupUrl = '$cleanUrl/auth_signup/signup';
-      
+
       final signupBody = {
         'jsonrpc': '2.0',
         'method': 'call',
@@ -607,133 +481,146 @@ class ResetPasswordService {
         },
         'id': DateTime.now().millisecondsSinceEpoch,
       };
-      
-      final response = await http.post(
-        Uri.parse(signupUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode(signupBody),
-      ).timeout(const Duration(seconds: 30));
-      
-      
+
+      final response = await http
+          .post(
+            Uri.parse(signupUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(signupBody),
+          )
+          .timeout(const Duration(seconds: 30));
+
       if (response.statusCode == 200) {
         final responseData = jsonDecode(response.body);
-        
+
         if (responseData['error'] == null) {
           return {
             'success': true,
-            'message': 'Password reset email sent successfully. Please check your email for reset instructions.',
+            'message':
+                'Password reset email sent successfully. Please check your email for reset instructions.',
           };
-        } else {
         }
-      } else {
       }
-      
-      // If signup API fails, try the web interface approach directly
+
       return await _tryWebInterfaceReset(cleanUrl, database, login);
-      
     } catch (e) {
       return await _tryWebInterfaceReset(cleanUrl, database, login);
     }
   }
-  
-  /// Try web interface reset as fallback
-  static Future<Map<String, dynamic>> _tryWebInterfaceReset(String cleanUrl, String database, String login) async {
+
+  /// Try the web login/reset interface, manually following redirects so that
+  /// the session cookie Odoo sets on an intermediate hop (e.g. `/web/login`
+  /// redirecting into the database context) isn't lost. Plain `http.get()`
+  /// auto-follows redirects but only exposes the *final* response's headers,
+  /// so any `Set-Cookie` from an earlier hop never reaches the subsequent
+  /// form POST — that's what used to make this flow fail and fall back to a
+  /// "please use the secure browser" message.
+  static Future<Map<String, dynamic>> _tryWebInterfaceReset(
+    String cleanUrl,
+    String database,
+    String login,
+  ) async {
     try {
-      // 1) Establish session on /web/login with a redirect (no db in URL)
       final loginUrl = '$cleanUrl/web/login';
       final resetUrl = '$cleanUrl/web/reset_password';
+      final dbQuery = database.isNotEmpty ? '&db=$database' : '';
 
-      final initialGet = await http
-          .get(
-            Uri.parse('$loginUrl?redirect=/web/login'),
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            },
-          )
-          .timeout(const Duration(seconds: 15));
+      final Map<String, String> cookies = {};
 
-      if (initialGet.statusCode != 200) {
-      }
+      final initialGet = await _getFollowingRedirects(
+        database.isNotEmpty ? '$loginUrl?db=$database' : loginUrl,
+        cookies,
+      );
 
-      // Collect cookies from initial GET
-      Map<String, String> cookies = {};
-      final initialSetCookie = initialGet.headers['set-cookie'];
-      if (initialSetCookie != null) {
-        cookies.addAll(_parseCookies(initialSetCookie));
-      }
+      debugPrint(
+        '[ResetPassword] initialGet final statusCode=${initialGet.statusCode}',
+      );
 
-      // 2) Load the reset password form (no db in URL, use redirect)
-      final resetGet = await http
-          .get(
-            Uri.parse('$resetUrl?redirect=/web/login'),
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-              if (cookies.isNotEmpty)
-                'Cookie': cookies.entries.map((e) => '${e.key}=${e.value}').join('; '),
-              'Referer': '$loginUrl?redirect=/web/login',
-            },
-          )
-          .timeout(const Duration(seconds: 15));
+      final resetGet = await _getFollowingRedirects(
+        '$resetUrl?redirect=/web/login$dbQuery',
+        cookies,
+        referer: '$loginUrl?redirect=/web/login$dbQuery',
+      );
 
+      debugPrint(
+        '[ResetPassword] resetGet final statusCode=${resetGet.statusCode}',
+      );
 
       if (resetGet.statusCode != 200) {
-        // Fallback to WebView to handle website routing intricacies
         return {
           'success': false,
-          'requiresWebView': true,
-          'webViewUrl': '$cleanUrl/web/login?db=$database',
-          'message': 'Unable to load reset form automatically. Please complete the reset in the secure browser.',
+          'message':
+              'Unable to load reset form automatically (status ${resetGet.statusCode}). Please try again later.',
         };
       }
 
-      // Merge any new cookies
-      final resetSetCookie = resetGet.headers['set-cookie'];
-      if (resetSetCookie != null) {
-        cookies.addAll(_parseCookies(resetSetCookie));
-      }
-
-      // Extract CSRF/token and hidden inputs from the reset page
       final csrfToken = _extractCsrfToken(resetGet.body);
       final formData = _extractAllFormData(resetGet.body, login, database);
       if (csrfToken != null && csrfToken.isNotEmpty) {
         formData['csrf_token'] = csrfToken;
       }
 
-      // Ensure required fields
       formData['login'] = login;
       formData['redirect'] = '/web/login';
 
-      // 3) Submit the reset form back to /web/reset_password (with redirect in URL)
+      debugPrint(
+        '[ResetPassword] resetGet.statusCode=${resetGet.statusCode} '
+        'csrfToken=${csrfToken == null ? 'NOT FOUND' : 'found (${csrfToken.length} chars)'} '
+        'formData keys=${formData.keys.toList()}',
+      );
+
       final postHeaders = {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
+        'Accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Origin': cleanUrl,
-        'Referer': '$resetUrl?redirect=/web/login',
+        'Referer': '$resetUrl?redirect=/web/login$dbQuery',
+        'ngrok-skip-browser-warning': '1',
         if (cookies.isNotEmpty)
-          'Cookie': cookies.entries.map((e) => '${e.key}=${e.value}').join('; '),
+          'Cookie':
+              cookies.entries.map((e) => '${e.key}=${e.value}').join('; '),
       };
 
-      final postResponse = await http
-          .post(
-            Uri.parse('$resetUrl?redirect=/web/login'),
-            headers: postHeaders,
-            body: Uri(queryParameters: formData).query,
-          )
-          .timeout(const Duration(seconds: 30));
+      final postRequest =
+          http.Request('POST', Uri.parse('$resetUrl?redirect=/web/login$dbQuery'))
+            ..followRedirects = false
+            ..headers.addAll(postHeaders)
+            ..body = Uri(queryParameters: formData).query;
 
+      final postClient = http.Client();
+      final http.Response postResponse;
+      try {
+        final streamedResponse = await postClient
+            .send(postRequest)
+            .timeout(const Duration(seconds: 30));
+        postResponse = await http.Response.fromStream(streamedResponse);
+      } finally {
+        postClient.close();
+      }
 
-      // Handle redirects as success pattern
+      debugPrint(
+        '[ResetPassword] postResponse.statusCode=${postResponse.statusCode} '
+        'body(first 500 chars)=${postResponse.body.substring(0, postResponse.body.length < 500 ? postResponse.body.length : 500)}',
+      );
+
+      if (postResponse.statusCode == 400 &&
+          postResponse.body.toLowerCase().contains('no account found')) {
+        return {
+          'success': false,
+          'message': 'No user found with this email address.',
+        };
+      }
+
       if (postResponse.statusCode == 302 || postResponse.statusCode == 303) {
-        final location = postResponse.headers['location'];
         return {
           'success': true,
-          'message': 'Password reset email sent successfully. Please check your email for reset instructions.',
+          'message':
+              'Password reset email sent successfully. Please check your email for reset instructions.',
         };
       }
 
@@ -742,47 +629,127 @@ class ResetPasswordService {
         if (_containsSuccessIndicators(body)) {
           return {
             'success': true,
-            'message': 'Password reset email sent successfully. Please check your email for reset instructions.',
+            'message':
+                'Password reset email sent successfully. Please check your email for reset instructions.',
           };
         }
-        if (_containsErrorIndicators(body)) {
+        if (body.contains('no account found') ||
+            _containsErrorIndicators(body)) {
           return {
             'success': false,
             'message': 'No user found with this email address.',
           };
         }
-        // If ambiguous, assume success like the browser flow
+
         return {
           'success': true,
-          'message': 'Password reset email sent successfully. Please check your email for reset instructions.',
+          'message':
+              'Password reset email sent successfully. Please check your email for reset instructions.',
         };
       }
 
-      // Fallback to WebView if unexpected status
       return {
         'success': false,
-        'requiresWebView': true,
-        'webViewUrl': '$cleanUrl/web/login?db=$database',
-        'message': 'Unable to reset password automatically. Please complete the reset in the secure browser.',
+        'message':
+            'Unable to reset password automatically. Please try again later or contact your administrator.',
       };
-      
     } catch (e) {
+      debugPrint('[ResetPassword] exception in _tryWebInterfaceReset: $e');
       return {
         'success': false,
-        'requiresWebView': true,
-        'webViewUrl': '$cleanUrl/web/login?db=$database',
-        'message': 'Unable to reset password automatically. Please complete the reset in the secure browser.',
+        'message':
+            'Unable to reset password automatically. Please try again later or contact your administrator.',
       };
     }
   }
-  
+
+  /// GETs [url], manually following any redirect chain while accumulating
+  /// `Set-Cookie` values from *every* hop into [cookies] (mutated in place)
+  /// and forwarding them on each subsequent hop — the piece plain
+  /// `http.get()` can't do, since it only surfaces the final response.
+  static Future<http.Response> _getFollowingRedirects(
+    String url,
+    Map<String, String> cookies, {
+    String? referer,
+    int maxHops = 5,
+  }) async {
+    var currentUrl = url;
+    var currentReferer = referer;
+    final visitedCookieState = <String, String>{};
+
+    for (var hop = 0; hop <= maxHops; hop++) {
+      final cookieHeaderNow = cookies.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('; ');
+
+      if (visitedCookieState[currentUrl] == cookieHeaderNow) {
+        throw http.ClientException(
+          'Redirect loop detected (same URL and cookies repeated)',
+          Uri.parse(currentUrl),
+        );
+      }
+      visitedCookieState[currentUrl] = cookieHeaderNow;
+
+      final request = http.Request('GET', Uri.parse(currentUrl))
+        ..followRedirects = false
+        ..headers['User-Agent'] =
+            'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'
+        ..headers['Accept'] =
+            'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        ..headers['ngrok-skip-browser-warning'] = '1';
+      if (cookies.isNotEmpty) {
+        request.headers['Cookie'] =
+            cookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
+      }
+      if (currentReferer != null) {
+        request.headers['Referer'] = currentReferer;
+      }
+
+      final client = http.Client();
+      http.Response response;
+      try {
+        final streamedResponse = await client
+            .send(request)
+            .timeout(const Duration(seconds: 15));
+        response = await http.Response.fromStream(streamedResponse);
+      } finally {
+        client.close();
+      }
+
+      final setCookie = response.headers['set-cookie'];
+      if (setCookie != null) {
+        cookies.addAll(_parseCookies(setCookie));
+      }
+
+      debugPrint(
+        '[ResetPassword] GET $currentUrl -> ${response.statusCode}'
+        '${response.statusCode >= 300 && response.statusCode < 400 ? ' Location=${response.headers['location']}' : ''}',
+      );
+
+      if (response.statusCode < 300 || response.statusCode >= 400) {
+        return response;
+      }
+
+      final location = response.headers['location'];
+      if (location == null) {
+        return response;
+      }
+
+      currentReferer = currentUrl;
+      currentUrl = location.startsWith('http')
+          ? location
+          : Uri.parse(currentUrl).resolve(location).toString();
+    }
+
+    throw http.ClientException('Too many redirects', Uri.parse(currentUrl));
+  }
+
   /// Parse cookies from Set-Cookie header
   static Map<String, String> _parseCookies(String cookieHeader) {
-    // Parse multiple cookies from a combined Set-Cookie header value.
-    // Strategy: capture name=value pairs that occur at the beginning or just after ", "
-    // and stop at the first semicolon (attributes come after semicolons).
     final cookies = <String, String>{};
-    final cookiePattern = RegExp(r'(?:(?<=^)|(?<=,\s))([^=;,\s]+)=([^;\r\n,]+)');
+    final cookiePattern = RegExp(
+      r'(?:(?<=^)|(?<=,\s))([^=;,\s]+)=([^;\r\n,]+)',
+    );
     for (final match in cookiePattern.allMatches(cookieHeader)) {
       final name = match.group(1);
       final value = match.group(2);

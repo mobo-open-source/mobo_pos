@@ -1,3 +1,4 @@
+import '../core/image_utils.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -1181,7 +1182,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
       );
     } else if (_userAvatar != null) {
       photoWidget = ClipOval(
-        child: Image.memory(
+        child: ImageUtils.memory(
           _userAvatar!,
           width: 120,
           height: 120,

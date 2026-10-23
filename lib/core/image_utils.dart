@@ -1,9 +1,52 @@
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
 class ImageUtils {
+  /// Base64 payload of a binary field value from `read`/`search_read`.
+  /// Odoo 20 returns binary fields as `{content, size, filename}`; earlier
+  /// versions return the base64 string itself. Returns '' when unset.
+  static String base64Of(dynamic value) {
+    if (value is String) return value;
+    if (value is Map && value['content'] is String) {
+      return value['content'] as String;
+    }
+    return '';
+  }
+
+  /// Odoo (16+) generates an SVG "initials" avatar for users without a photo
+  /// and stores it as `image_1920`, so profile images can be SVG.
+  static bool isSvg(Uint8List? bytes) {
+    if (bytes == null || bytes.length < 5) return false;
+    final head = String.fromCharCodes(bytes.take(256)).trimLeft();
+    return head.startsWith('<svg') || head.startsWith('<?xml');
+  }
+
+  /// Drop-in for [Image.memory] that also renders SVG bytes.
+  static Widget memory(
+    Uint8List bytes, {
+    double? width,
+    double? height,
+    BoxFit fit = BoxFit.cover,
+    ImageErrorWidgetBuilder? errorBuilder,
+  }) {
+    if (isSvg(bytes)) {
+      return SvgPicture.memory(bytes, width: width, height: height, fit: fit);
+    }
+    return Image.memory(
+      bytes,
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: errorBuilder,
+    );
+  }
+
   /// Checks if the provided bytes represent a valid image format (PNG, JPEG, GIF, WebP).
   static bool isValidImage(Uint8List? bytes) {
     if (bytes == null || bytes.isEmpty) return false;
+    if (isSvg(bytes)) return true;
 
     // Minimum bytes needed to check magic numbers
     if (bytes.length < 8) return false;

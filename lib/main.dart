@@ -1,3 +1,5 @@
+import 'services/database_expiry.dart';
+import 'shared/widgets/snackbar.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
@@ -17,6 +19,7 @@ import 'screens/biometric_auth_screen.dart';
 import 'screens/get_started_screen.dart';
 import 'providers/theme_provider.dart';
 import 'core/motion_provider.dart';
+import 'core/company/providers/company_provider.dart';
 
 String sessionId = "";
 bool isLoggedIn = false;
@@ -35,17 +38,25 @@ class MyHttpOverrides extends HttpOverrides {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Enable SSL certificate bypass for development/testing
   // WARNING: Remove this in production or make it configurable
   HttpOverrides.global = MyHttpOverrides();
-  
+
   await IsarService.instance;
+  DatabaseExpiryObserver.instance.start();
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => MotionProvider()),
+        ChangeNotifierProvider(
+          create: (_) {
+            final p = CompanyProvider();
+            p.initialize();
+            return p;
+          },
+        ),
       ],
       child: const MyApp(),
     ),
@@ -64,7 +75,7 @@ class MyApp extends StatelessWidget {
           if (!themeProvider.isInitialized) {
             return const SizedBox.shrink();
           }
-          
+
           return MaterialApp(
             navigatorKey: navigatorKey,
             scaffoldMessengerKey: scaffoldMessengerKey,
@@ -77,33 +88,43 @@ class MyApp extends StatelessWidget {
                 seedColor: const Color(0xFFC03355),
                 brightness: Brightness.light,
               ),
+              scaffoldBackgroundColor: Colors.grey[50],
+              canvasColor: Colors.grey[50],
               dialogTheme: DialogThemeData(
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20),
                 ),
                 elevation: 8,
                 backgroundColor: Colors.white,
-                titleTextStyle: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                ),
+                titleTextStyle: const TextStyle(fontWeight: FontWeight.w700),
                 contentTextStyle: const TextStyle(),
               ),
               elevatedButtonTheme: ElevatedButtonThemeData(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFB00020), // uses error-like color in light
+                  backgroundColor: const Color(
+                    0xFFB00020,
+                  ), // uses error-like color in light
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
                   elevation: 3,
                   textStyle: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
               textButtonTheme: TextButtonThemeData(
                 style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF6F6F6F), // onSurfaceVariant-like
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  foregroundColor: const Color(
+                    0xFF6F6F6F,
+                  ), // onSurfaceVariant-like
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -117,6 +138,8 @@ class MyApp extends StatelessWidget {
                 seedColor: const Color(0xFFC03355),
                 brightness: Brightness.dark,
               ),
+              scaffoldBackgroundColor: Colors.grey[900],
+              canvasColor: Colors.grey[900],
               dialogTheme: DialogThemeData(
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20),
@@ -127,9 +150,7 @@ class MyApp extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   color: Colors.white,
                 ),
-                contentTextStyle: TextStyle(
-                  color: Colors.grey[300],
-                ),
+                contentTextStyle: TextStyle(color: Colors.grey[300]),
               ),
               elevatedButtonTheme: ElevatedButtonThemeData(
                 style: ElevatedButton.styleFrom(
@@ -138,7 +159,10 @@ class MyApp extends StatelessWidget {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
                   elevation: 0,
                   textStyle: const TextStyle(fontWeight: FontWeight.w600),
                 ),
@@ -146,7 +170,10 @@ class MyApp extends StatelessWidget {
               textButtonTheme: TextButtonThemeData(
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.grey[400],
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -156,7 +183,7 @@ class MyApp extends StatelessWidget {
             ),
             initialRoute: '/',
             routes: {
-              '/':(context) => const SplashScreen(),
+              '/': (context) => const SplashScreen(),
               '/get_started': (context) => const GetStartedScreen(),
               '/server_setup': (context) => const ServerSetupScreen(),
               '/init': (context) => const FutureBuilderPage(),
@@ -165,11 +192,12 @@ class MyApp extends StatelessWidget {
               '/future': (context) => const FutureBuilderPage(),
               '/profile': (context) => ProfilePage(),
               '/backend': (context) => BackendPage(),
-              '/biometric': (context) => BiometricAuthScreen(
-                onAuthenticationSuccess: () {
-                  Navigator.of(context).pushReplacementNamed('/webapp');
-                },
-              ),
+              '/biometric':
+                  (context) => BiometricAuthScreen(
+                    onAuthenticationSuccess: () {
+                      Navigator.of(context).pushReplacementNamed('/webapp');
+                    },
+                  ),
             },
           );
         },
@@ -185,7 +213,8 @@ class FutureBuilderPage extends StatefulWidget {
   State<FutureBuilderPage> createState() => _FutureBuilderPageState();
 }
 
-class _FutureBuilderPageState extends State<FutureBuilderPage> with WidgetsBindingObserver {
+class _FutureBuilderPageState extends State<FutureBuilderPage>
+    with WidgetsBindingObserver {
   bool _isAppInBackground = false;
   bool _shouldShowBiometric = false;
 
@@ -207,6 +236,26 @@ class _FutureBuilderPageState extends State<FutureBuilderPage> with WidgetsBindi
     var database = prefs.getString("database") ?? "";
     var posId = prefs.getInt("pos_id");
 
+    // Cold start: an expired database must not reopen straight into the POS
+    // from the stored session.
+    var expired = false;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      expired = await DatabaseExpiry.isExpired(
+        serverUrl: serverUrl,
+        sessionId: sessionId,
+      );
+      if (expired) {
+        await DatabaseExpiry.clearStoredSession();
+        sessionId = null;
+        posId = null;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final ctx = navigatorKey.currentContext;
+          if (ctx != null && ctx.mounted) {
+            CustomSnackbar.showError(ctx, DatabaseExpiredException.message);
+          }
+        });
+      }
+    }
 
     // Check if biometric authentication should be prompted
     bool shouldPromptBiometric = await BiometricService.shouldPromptBiometric();
@@ -241,17 +290,14 @@ class _FutureBuilderPageState extends State<FutureBuilderPage> with WidgetsBindi
         } else if (snapshot.hasError) {
           // Handle any errors that may occur
           return Scaffold(
-            body: Center(
-              child: Text('Error: ${snapshot.error}'),
-            ),
+            body: Center(child: Text('Error: ${snapshot.error}')),
           );
         } else if (snapshot.hasData) {
           var hasSession = snapshot.data!["hasSession"];
-          var serverUrl = snapshot.data!["serverUrl"];
-          var database = snapshot.data!["database"];
           var posId = snapshot.data!["posId"];
-          var shouldPromptBiometric = snapshot.data!["shouldPromptBiometric"] ?? false;
-          
+          var shouldPromptBiometric =
+              snapshot.data!["shouldPromptBiometric"] ?? false;
+
           // If biometric authentication is enabled and user has a session, show biometric screen first
           if (shouldPromptBiometric && hasSession == true) {
             return BiometricAuthScreen(
@@ -269,7 +315,7 @@ class _FutureBuilderPageState extends State<FutureBuilderPage> with WidgetsBindi
               },
             );
           }
-          
+
           if (hasSession == true) {
             // If session exists, check if POS configuration is selected
             if (posId != null) {
@@ -278,22 +324,14 @@ class _FutureBuilderPageState extends State<FutureBuilderPage> with WidgetsBindi
               return BackendPage();
             }
           } else {
-            // If no session, check if server configuration exists
-            if (serverUrl.isEmpty || database.isEmpty) {
-              return ServerSetupScreen();
-            } else {
-              return LoginPage(
-                serverUrl: serverUrl,
-                database: database,
-              );
-            }
+            // No session: always start from the server address + database
+            // setup page (it pre-fills the last used values).
+            return ServerSetupScreen();
           }
         } else {
           // Fallback in case of unexpected behavior
           return const Scaffold(
-            body: Center(
-              child: Text("Something went wrong!"),
-            ),
+            body: Center(child: Text("Something went wrong!")),
           );
         }
       },

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hugeicons/hugeicons.dart';
@@ -59,10 +60,15 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
     final savedUrl = prefs.getString('lastUrl');
     final savedDatabase = prefs.getString('lastDatabase');
     
-    // Load URL history for suggestions
-    final urlHistoryList = prefs.getStringList('urlHistory') ?? [];
+    // Load URL history for suggestions. Entries saved from SwitchAccountScreen's
+    // "Add Account" flow are JSON objects (URL plus database/credentials); this
+    // screen only needs the URL, so unwrap those and fall back to legacy plain
+    // URL strings for entries saved from this screen itself.
+    final urlHistoryList = _parseUrlHistory(
+      prefs.getStringList('urlHistory') ?? [],
+    );
     setState(() {
-      _urlHistory = urlHistoryList;
+      _urlHistory = urlHistoryList.toSet().toList();
     });
     
     if (savedUrl != null && savedUrl.isNotEmpty) {
@@ -359,8 +365,10 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
     
     if (message.contains('404') || message.contains('not found')) {
       return 'Server not found. Please verify your server URL is correct and the server is running.';
-    } else if (message.contains('403') || message.contains('forbidden')) {
-      return 'Access denied. The server may not allow database listing or requires authentication.';
+    } else if (message.contains('403') ||
+        message.contains('forbidden') ||
+        message.contains('access denied')) {
+      return 'Database listing is disabled (list_db=false). Cannot fetch databases automatically.';
     } else if (message.contains('500') || message.contains('internal server error')) {
       return 'Server error occurred. Please contact your system administrator or try again later.';
     } else if (message.contains('timeout') || message.contains('timed out')) {
@@ -398,8 +406,27 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
     await prefs.setStringList('urlHistory', history);
     
     setState(() {
-      _urlHistory = history;
+      _urlHistory = _parseUrlHistory(history);
     });
+  }
+
+  /// Converts stored `urlHistory` entries into display URLs. Entries saved
+  /// from SwitchAccountScreen are JSON objects; legacy ones are plain URLs.
+  static List<String> _parseUrlHistory(List<String> rawHistory) {
+    final urls = <String>[];
+    for (final entry in rawHistory) {
+      try {
+        final decoded = jsonDecode(entry);
+        if (decoded is Map) {
+          final protocol = decoded['protocol'] ?? 'https://';
+          final url = decoded['url'];
+          if (url is String && url.isNotEmpty) urls.add('$protocol$url');
+          continue;
+        }
+      } catch (_) {}
+      if (entry.isNotEmpty) urls.add(entry);
+    }
+    return urls.toSet().toList();
   }
 
   // Proceed to login page

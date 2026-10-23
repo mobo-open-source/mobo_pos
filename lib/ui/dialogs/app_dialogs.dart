@@ -1,7 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class AppDialogs {
   const AppDialogs._();
+
+  static const Color _primaryColor = Color(0xFFC03355);
+  static const Color _destructiveColor = Color(0xFFD32F2F);
+
+  static TextStyle _font({
+    double size = 14,
+    FontWeight weight = FontWeight.w400,
+    Color color = _primaryColor,
+  }) {
+    return GoogleFonts.manrope(
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+    );
+  }
 
   static Future<bool?> showConfirm(
     BuildContext context, {
@@ -11,82 +27,224 @@ class AppDialogs {
     String cancelText = 'Cancel',
     bool isDestructive = false,
   }) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    // Use the requested brand color for dialog confirm buttons in all cases
-    const Color confirmBg = Color(0xFFC03355);
-    final Color confirmFg = Colors.white;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color confirmBg = isDestructive ? _destructiveColor : _primaryColor;
 
     return showDialog<bool>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          elevation: isDark ? 0 : 8,
-          backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+          backgroundColor: isDark ? Colors.grey[800] : Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: Text(
             title,
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: isDark ? Colors.white : theme.colorScheme.onSurface,
+            style: _font(
+              weight: FontWeight.bold,
+              color: isDark ? Colors.white : Colors.black,
+              size: 18,
             ),
           ),
           content: Text(
             message,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color:
-                  isDark ? Colors.grey[300] : theme.colorScheme.onSurfaceVariant,
+            style: _font(
+              weight: FontWeight.normal,
+              color: isDark ? Colors.white : Colors.black,
+              size: 15,
             ),
           ),
-          actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           actions: [
             Row(
               children: [
                 Expanded(
-                  child: TextButton(
+                  child: ElevatedButton(
                     onPressed: () => Navigator.of(ctx).pop(false),
-                    style: TextButton.styleFrom(
-                      foregroundColor: isDark
-                          ? Colors.grey[400]
-                          : theme.colorScheme.onSurfaceVariant,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: isDark ? Colors.white : Colors.black87,
+                      backgroundColor: isDark ? Colors.grey[800] : Colors.white,
+                      side: BorderSide(
+                        color: isDark ? Colors.white : _primaryColor,
                       ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8.0),
                       ),
                     ),
                     child: Text(
-                      cancelText,
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+                      cancelText.toUpperCase(),
+                      style: _font(
+                        weight: FontWeight.bold,
+                        color: isDark ? Colors.white : _primaryColor,
+                        size: 12,
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () => Navigator.of(ctx).pop(true),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: confirmBg,
-                      foregroundColor: confirmFg,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8.0),
                       ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      elevation: isDark ? 0 : 3,
                     ),
                     child: Text(
-                      confirmText,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      confirmText.toUpperCase(),
+                      style: _font(
+                        color: Colors.white,
+                        weight: FontWeight.bold,
+                        size: 12,
+                      ),
                     ),
                   ),
                 ),
               ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// A non-dismissible "required module missing" dialog: a warning icon next
+  /// to the title, a single full-width action button, and no way to
+  /// dismiss it without tapping that button — the account genuinely can't be
+  /// used until the caller acts on it (e.g. logging out), unlike
+  /// [showConfirm]'s two-choice dialogs which leave a real option to cancel.
+  static Future<void> showModuleMissing(
+    BuildContext context, {
+    required String title,
+    required String message,
+    String buttonText = 'Back to Login',
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: isDark ? Colors.grey[800] : Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.error_outline_rounded,
+                color: _destructiveColor,
+                size: 26,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: _font(
+                    weight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black,
+                    size: 18,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            message,
+            style: _font(
+              weight: FontWeight.normal,
+              color: isDark ? Colors.white : Colors.black87,
+              size: 15,
+            ),
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _primaryColor,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                ),
+                child: Text(
+                  buttonText,
+                  style: _font(
+                    color: Colors.white,
+                    weight: FontWeight.w600,
+                    size: 14,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// A single-button informational dialog, for messages the user just needs
+  /// to acknowledge (no confirm/cancel choice).
+  static Future<void> showInfo(
+    BuildContext context, {
+    required String title,
+    required String message,
+    String buttonText = 'OK',
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: isDark ? Colors.grey[800] : Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            title,
+            style: _font(
+              weight: FontWeight.bold,
+              color: isDark ? Colors.white : Colors.black,
+              size: 18,
+            ),
+          ),
+          content: Text(
+            message,
+            style: _font(
+              weight: FontWeight.normal,
+              color: isDark ? Colors.white : Colors.black,
+              size: 15,
+            ),
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: isDark ? Colors.white : Colors.black87,
+                  backgroundColor: isDark ? Colors.grey[800] : Colors.white,
+                  side: BorderSide(
+                    color: isDark ? Colors.white : _primaryColor,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                ),
+                child: Text(
+                  buttonText.toUpperCase(),
+                  style: _font(
+                    weight: FontWeight.bold,
+                    color: isDark ? Colors.white : _primaryColor,
+                    size: 12,
+                  ),
+                ),
+              ),
             ),
           ],
         );

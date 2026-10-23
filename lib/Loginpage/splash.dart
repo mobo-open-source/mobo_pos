@@ -112,6 +112,10 @@ class _SplashScreenState extends State<SplashScreen>
       final hasSeenGetStarted = prefs.getBool('hasSeenGetStarted') ?? false;
       
       if (!hasSeenGetStarted) {
+        // First launch: drop any stale server/session data (e.g. restored from
+        // a backup) so the user starts at server address + database setup.
+        await prefs.clear();
+        if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/get_started');
       } else {
         Navigator.pushReplacementNamed(context, '/init');

@@ -1,18 +1,21 @@
+import '../core/image_utils.dart';
 import 'dart:async';
-import 'package:isar_community/isar.dart';
-import 'package:dropdown_button2/dropdown_button2.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hugeicons/hugeicons.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../Isarmodel/Isar.dart';
-import '../Isarmodel/user_profile.dart';
+import 'login_layout.dart';
+import 'two_factor_authentication.dart';
 import '../services/auth_service.dart';
+import '../services/pos_access_service.dart';
 import '../services/storage_service.dart';
 import '../services/network_service.dart';
 import '../core/style.dart';
+import '../ui/dialogs/app_dialogs.dart';
 
 /// Screen for adding a new account or switching between existing server configurations.
 class SwitchAccountScreen extends StatefulWidget {
@@ -28,6 +31,11 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
   final TextEditingController _urlController = TextEditingController();
   final _loginFormKey = GlobalKey<FormState>();
   bool _isLoading = false;
+  // Tracks the background database-list fetch separately from _isLoading
+  // (which governs account submission): the fetch reruns on every keystroke
+  // via debounce, so tying the URL field's `enabled` to it would disable
+  // (and kick the keyboard out of) the field mid-typing on every edit.
+  bool _isFetchingDatabases = false;
   String? _errorMessage;
   bool _isPasswordVisible = false;
   List<String> _databases = [];
@@ -37,34 +45,137 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
   String selectedProtocol = 'https://';
   int _currentStep = 0;
   String? _workingProtocol;
+  String? _pendingProtocol;
   bool showError = false;
+  List<String> _urlHistory = [];
+  Map<String, Map<String, String>> _urlHistoryDetails = {};
 
   @override
   void initState() {
     super.initState();
+    _loadUrlHistory();
     _initializeUrl();
     _urlController.addListener(_onUrlChanged);
+  }
+
+  /// Loads the shared `urlHistory` entries. Entries saved from this screen are
+  /// JSON objects carrying the database/username/password alongside the URL
+  /// (matching mobo FullSuite's `SwitchAccountScreen`); entries saved from
+  /// [ServerSetupScreen]'s simpler flow are plain URL strings, so those are
+  /// kept as-is with empty credential details.
+  Future<void> _loadUrlHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rawHistory = prefs.getStringList('urlHistory') ?? [];
+
+    final urls = <String>[];
+    final details = <String, Map<String, String>>{};
+
+    for (final entry in rawHistory) {
+      try {
+        final decoded = jsonDecode(entry);
+        final protocol = decoded['protocol'] ?? 'https://';
+        final url = decoded['url'] ?? '';
+        final fullUrl = '$protocol$url';
+        urls.add(fullUrl);
+        details[fullUrl] = {
+          'db': decoded['db'] ?? '',
+          'username': decoded['username'] ?? '',
+          'password': decoded['password'] ?? '',
+        };
+      } catch (_) {
+        if (entry.isNotEmpty) {
+          urls.add(entry);
+          details[entry] = {'db': '', 'username': '', 'password': ''};
+        }
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _urlHistory = urls.toSet().toList();
+      _urlHistoryDetails = details;
+    });
+  }
+
+  /// Saves a successfully-connected server, along with the database and
+  /// credentials used, to the shared `urlHistory` list — most-recent-first,
+  /// deduped by protocol+URL, matching mobo FullSuite's `SwitchAccountScreen`.
+  Future<void> _saveUrlHistoryWithProtocol(
+    String protocol,
+    String url,
+    String database,
+    String username,
+    String password,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> history = prefs.getStringList('urlHistory') ?? [];
+
+    final entry = {
+      'protocol': protocol,
+      'url': url,
+      'db': database,
+      'username': username,
+      'password': password,
+    };
+
+    history.removeWhere((e) {
+      try {
+        final d = jsonDecode(e);
+        return d['url'] == url && d['protocol'] == protocol;
+      } catch (_) {
+        return e == '$protocol$url';
+      }
+    });
+
+    history.insert(0, jsonEncode(entry));
+    await prefs.setStringList('urlHistory', history);
+    await _loadUrlHistory();
   }
 
   Future<void> _initializeUrl() async {
     final prefs = await SharedPreferences.getInstance();
     final url = prefs.getString('uri') ?? '';
     if (url.isNotEmpty) {
-       String processedUrl = url;
-       if (url.startsWith('https://')) {
-         selectedProtocol = 'https://';
-         processedUrl = url.substring(8);
-       } else if (url.startsWith('http://')) {
-         selectedProtocol = 'http://';
-         processedUrl = url.substring(7);
-       }
+      String processedUrl = url;
+      if (url.startsWith('https://')) {
+        selectedProtocol = 'https://';
+        processedUrl = url.substring(8);
+      } else if (url.startsWith('http://')) {
+        selectedProtocol = 'http://';
+        processedUrl = url.substring(7);
+      }
       _urlController.text = processedUrl;
       _fetchDatabaseList();
     }
   }
 
   void _onUrlChanged() {
+    final pendingProtocol = _pendingProtocol;
+    if (pendingProtocol != null) {
+      _pendingProtocol = null;
+      if (selectedProtocol != pendingProtocol) {
+        setState(() {
+          selectedProtocol = pendingProtocol;
+        });
+      }
+    }
+
     if (_debounce?.isActive ?? false) _debounce!.cancel();
+
+    // _fetchDatabaseList() is the only place that resets the error/database
+    // state, but it's only called below when the field is non-empty - so
+    // clearing the field back to empty (e.g. deleting a URL that failed to
+    // validate) used to leave the stale error showing forever, since nothing
+    // else ever ran to clear it. Reset immediately on every change instead,
+    // matching ServerSetupScreen's equivalent onChanged handler.
+    setState(() {
+      _databases.clear();
+      _selectedDatabase = null;
+      _errorMessage = null;
+      _workingProtocol = null;
+      showError = false;
+    });
+
     _debounce = Timer(const Duration(milliseconds: 500), () {
       if (_urlController.text.isNotEmpty) {
         _fetchDatabaseList();
@@ -72,20 +183,37 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
     });
   }
 
+  /// Restores the database/username/password saved alongside a tapped URL
+  /// suggestion, matching mobo FullSuite's autofill-from-history behavior.
+  void _onHistorySelected(String selectedUrl) {
+    final entry = _urlHistoryDetails[selectedUrl];
+    if (entry == null) return;
+    setState(() {
+      if ((entry['db'] ?? '').isNotEmpty) {
+        _selectedDatabase = entry['db'];
+      }
+      _usernameController.text = entry['username'] ?? '';
+      _passwordController.text = entry['password'] ?? '';
+    });
+  }
+
   /// Fetches the list of databases for the current URL.
   Future<void> _fetchDatabaseList() async {
     try {
       setState(() {
-        _isLoading = true;
+        _isFetchingDatabases = true;
         _databases.clear();
         _selectedDatabase = null;
         _errorMessage = null;
         _workingProtocol = null;
+        showError = false;
       });
 
       String rawUrl = _urlController.text.trim();
-      final match =
-          RegExp(r'^(https?://)', caseSensitive: false).firstMatch(rawUrl);
+      final match = RegExp(
+        r'^(https?://)',
+        caseSensitive: false,
+      ).firstMatch(rawUrl);
 
       List<String> protocolsToTry = [];
       String host;
@@ -110,8 +238,9 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
 
       for (String protocol in protocolsToTry) {
         try {
-          final dbList =
-              await _networkService.fetchDatabaseList('$protocol$host');
+          final dbList = await _networkService.fetchDatabaseList(
+            '$protocol$host',
+          );
 
           if (dbList.isNotEmpty) {
             setState(() {
@@ -122,7 +251,7 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
 
             final prefs = await SharedPreferences.getInstance();
             final currentDb = prefs.getString('dbName');
-            
+
             setState(() {
               if (currentDb != null && _databases.contains(currentDb)) {
                 _selectedDatabase = currentDb;
@@ -160,43 +289,72 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
       });
     } finally {
       setState(() {
-        _isLoading = false;
+        _isFetchingDatabases = false;
       });
     }
   }
 
-  String _formatLoginError(dynamic error) {
-    if (error == null) return "Unknown error occurred";
-    final errorStr = error.toString().toLowerCase();
+  String _formatLoginError(dynamic error) =>
+      AuthService.formatLoginError(error);
 
-    if (errorStr.contains('html instead of json') ||
-        errorStr.contains('formatexception')) {
-      return 'Server configuration issue. This may not be an Odoo server or the URL is incorrect.';
-    } else if (errorStr.contains('invalid login') ||
-        errorStr.contains('wrong credentials')) {
-      return 'Incorrect email or password. Please check your login credentials.';
-    } else if (errorStr.contains('user not found') ||
-        errorStr.contains('no such user')) {
-      return 'User account not found. Please check your email address or contact your administrator.';
-    } else if (errorStr.contains('database') &&
-        errorStr.contains('not found')) {
-      return 'Selected database is not available. Please choose a different database.';
-    } else if (errorStr.contains('network') || errorStr.contains('socket')) {
-      return 'Network connection failed. Please check your internet connection.';
-    } else if (errorStr.contains('timeout')) {
-      return 'Connection timed out. The server may be slow or unreachable.';
-    } else if (errorStr.contains('unauthorized') || errorStr.contains('403')) {
-      return 'Access denied. Your account may not have permission to access this database.';
-    } else if (errorStr.contains('server') || errorStr.contains('500')) {
-      return 'Server error occurred. Please try again later or contact your administrator.';
-    } else if (errorStr.contains('ssl') || errorStr.contains('certificate')) {
-      return 'SSL connection failed. Try using HTTP instead of HTTPS.';
-    } else if (errorStr.contains('connection refused')) {
-      return 'Server is not responding. Please verify the server URL and try again.';
-    } else if (errorStr.contains('connection terminated during handshake')) {
-      return 'Secure connection failed. The server may not support HTTPS or has an invalid SSL certificate. Try switching to HTTP or contact your administrator.';
+  /// Shown when [PosAccessService.checkAccess] rejects the account being
+  /// added, using the same copy as [BackendPage]'s equivalent dialogs — but
+  /// (unlike there) nothing was ever saved for this account, so there's
+  /// nothing to log out of.
+  Future<void> _showPosAccessDialog(PosAccessStatus status) async {
+    if (status == PosAccessStatus.ok) return;
+
+    if (status == PosAccessStatus.moduleNotInstalled) {
+      // Matches BackendPage's post-login "Module Missing" dialog for the
+      // same failure — a single acknowledgement button rather than an
+      // OK/Back choice. "Back to Login" returns to this same Add Account
+      // flow's first step (server + database), the same as tapping the
+      // screen's own back arrow from the credentials step — not the plain
+      // login page, since nothing was ever saved for this account and
+      // there's another already-signed-in account this flow was reached
+      // from.
+      await AppDialogs.showModuleMissing(
+        context,
+        title: 'Module Missing',
+        message:
+            'The required "Point of Sale" module is not installed on this '
+            'server. Please contact your administrator to enable it.',
+        buttonText: 'Back to Login',
+      );
+      if (mounted) {
+        setState(() {
+          _currentStep = 0;
+        });
+      }
+      return;
+    }
+
+    late final String title;
+    late final String message;
+    if (status == PosAccessStatus.accessDenied) {
+      title = 'Access Denied';
+      message =
+          "Your account doesn't have permission to access Point of Sale. "
+          "Please contact your Odoo administrator to be added to the "
+          "Point of Sale / User or Point of Sale / Administrator group.";
     } else {
-      return 'Login failed. Please check your credentials and server settings.';
+      title = 'Configuration Required';
+      message =
+          "Please enable the 'Show in POS Mobile' field in POS settings.";
+    }
+
+    // "OK" stays on this screen to retry with different credentials; "Back"
+    // leaves the Add Account flow entirely, returning to whichever screen
+    // opened it.
+    final confirmed = await AppDialogs.showConfirm(
+      context,
+      title: title,
+      message: message,
+      confirmText: 'OK',
+      cancelText: 'Back',
+    );
+    if (confirmed != true && mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
     }
   }
 
@@ -209,161 +367,6 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
     super.dispose();
   }
 
-  Future<void> _saveUserData(
-      SharedPreferences prefs,
-      OdooSession session,
-      Map<String, dynamic> userData,
-      Map<String, dynamic> availableFields,
-      String url,
-      String dbName) async {
-    await prefs.setString("session_id", session.id);
-    await prefs.setString("username", _usernameController.text);
-    await prefs.setString("password", _passwordController.text);
-    await prefs.setString("uri", url);
-    await prefs.setString("dbName", dbName);
-    await prefs.setBool("logoutAction", true);
-    await prefs.setString("userId", session.userId.toString());
-    await prefs.setString("userLogin", session.userLogin);
-    await prefs.setString("userName", session.userName);
-    await prefs.setString("partnerId", session.partnerId.toString());
-    await prefs.setString("userLang", session.userLang);
-    await prefs.setString("userTz", session.userTz);
-    await prefs.setBool("isSystem", session.isSystem);
-    await prefs.setString("serverVersion", session.serverVersion);
-    await prefs.setString("companyId", session.companyId.toString());
-    await prefs.setString(
-        "allowedCompanies", session.allowedCompanies.toString());
-
-    final isar = await IsarService.instance;
-    final accountKey = url;
-    final userProfile = UserProfile()
-      ..userId = session.userId.toString()
-      ..userName =
-          userData['name'] is String ? userData['name'] : session.userName
-      ..userEmail = userData['email'] is String ? userData['email'] : ''
-      ..userPhone =
-          userData['work_phone'] is String ? userData['work_phone'] : ''
-      ..workLocation = userData['work_location_id'] is List &&
-              userData['work_location_id'].isNotEmpty
-          ? userData['work_location_id'][1] is String
-              ? userData['work_location_id'][1]
-              : ''
-          : ''
-      ..department = userData['department_id'] is List &&
-              userData['department_id'].isNotEmpty
-          ? userData['department_id'][0].toString()
-          : ''
-      ..language = userData['lang'] is String ? userData['lang'] : ''
-      ..timezone = userData['tz'] is String ? userData['tz'] : ''
-      ..emailSignature =
-          userData['signature'] is String ? userData['signature'] : ''
-      ..maritalStatus = userData['marital'] is String ? userData['marital'] : ''
-      ..profileImageBase64 =
-          userData['image_1920'] is String ? userData['image_1920'] : ''
-      ..notificationByEmail = userData['notification_type'] is String &&
-          userData['notification_type'] == 'email'
-      ..notificationInOdoo = userData['notification_type'] is String &&
-          userData['notification_type'] == 'inbox'
-      ..odooBotStatus = userData['odoobot_state'] is String &&
-          (userData['odoobot_state'] == 'onboarding' ||
-              userData['odoobot_state'] == 'not_initialized')
-      ..dbName = dbName
-      ..serverUrl = url
-      ..username = _usernameController.text
-      ..password = _passwordController.text
-      ..companyId = session.companyId.toString()
-      ..accountKey = accountKey
-      ..lastUpdated = DateTime.now();
-
-    await isar.writeTxn(() async {
-      final existingProfile = await isar.userProfiles
-          .filter()
-          .accountKeyEqualTo(accountKey)
-          .findFirst();
-      if (existingProfile != null) {
-        userProfile.id = existingProfile.id;
-      }
-      await isar.userProfiles.put(userProfile);
-    });
-  }
-
-  Future<void> _saveSignedAccountToIsar(
-      Map<String, dynamic> userData,
-      String userId,
-      String companyId,
-      String url,
-      String dbName) async {
-    final isar = await IsarService.instance;
-    final accountKey = url;
-
-    final signedAccount = SignedAccount()
-      ..accountKey = accountKey
-      ..username = _usernameController.text
-      ..serverAddress = url
-      ..database = dbName
-      ..password = _passwordController.text
-      ..userNameDisplay = userData['name'] is String
-          ? userData['name']
-          : _usernameController.text
-      ..profileImage =
-          userData['image_1920'] is String ? userData['image_1920'] : ''
-      ..accountIdentifier = accountKey;
-
-    await isar.writeTxn(() async {
-      final existingAccount = await isar.signedAccounts
-          .where()
-          .accountIdentifierEqualTo(accountKey)
-          .findFirst();
-      if (existingAccount != null) {
-        signedAccount.id = existingAccount.id;
-      }
-      await isar.signedAccounts.put(signedAccount);
-    });
-  }
-
-  Future<void> _saveSignedAccountListingToIsar(
-      Map<String, dynamic> userData, String url, String dbName) async {
-    final isar = await IsarService.instance;
-    final accountKey = url;
-
-    final signedAccountListing = SignedAccountListing()
-      ..accountKey = accountKey
-      ..username = _usernameController.text
-      ..serverAddress = url
-      ..database = dbName
-      ..password = _passwordController.text
-      ..userNameDisplay = userData['name'] is String
-          ? userData['name']
-          : _usernameController.text
-      ..profileImage =
-          userData['image_1920'] is String ? userData['image_1920'] : ''
-      ..lastLoginTime = DateTime.now()
-      ..accountIdentifier = accountKey;
-
-    await isar.writeTxn(() async {
-      final existingAccount = await isar.signedAccountListings
-          .where()
-          .accountIdentifierEqualTo(accountKey)
-          .findFirst();
-      if (existingAccount != null) {
-        signedAccountListing.id = existingAccount.id;
-      }
-      await isar.signedAccountListings.put(signedAccountListing);
-    });
-  }
-
-  Future<void> _saveSignedAccount(String username, String database) async {
-    final prefs = await SharedPreferences.getInstance();
-    List<String> accounts = prefs.getStringList('signed_accounts') ?? [];
-    String account = '$username@$database';
-    if (!accounts.contains(account) &&
-        username.isNotEmpty &&
-        database.isNotEmpty) {
-      accounts.add(account);
-      await prefs.setStringList('signed_accounts', accounts);
-    }
-  }
-
   /// Authenticates the user and adds the new account to the local storage.
   Future<void> _addAccount() async {
     if (!_loginFormKey.currentState!.validate()) return;
@@ -374,9 +377,8 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
     });
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      
-      final url = '${_workingProtocol ?? selectedProtocol}${_urlController.text.trim()}';
+      final url =
+          '${_workingProtocol ?? selectedProtocol}${_urlController.text.trim()}';
       final dbName = _selectedDatabase ?? '';
 
       if (url.isEmpty || dbName.isEmpty) {
@@ -393,6 +395,28 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
 
       if (session == null) throw Exception("Authentication failed.");
 
+      final client = OdooClient(url);
+      await client.authenticate(
+        dbName,
+        _usernameController.text.trim(),
+        _passwordController.text.trim(),
+      );
+
+      // Verify this account can actually use POS before treating it as the
+      // active session. An account that fails this check must never be
+      // logged in at all — nothing has been saved yet at this point, so on
+      // failure the user just stays on this screen with whatever account
+      // was active before untouched, free to try different credentials,
+      // instead of being bounced through a login/logout cycle.
+      final accessResult = await PosAccessService.checkAccess(client);
+      if (accessResult.status != PosAccessStatus.ok) {
+        client.close();
+        if (mounted) {
+          await _showPosAccessDialog(accessResult.status);
+        }
+        return;
+      }
+
       final storageService = StorageService();
       await storageService.saveSession(session);
       await storageService.saveLoginState(
@@ -401,9 +425,6 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
         url: url,
         password: _passwordController.text.trim(),
       );
-      
-      final client = OdooClient(url);
-      await client.authenticate(dbName, _usernameController.text.trim(), _passwordController.text.trim());
 
       Map<String, dynamic> availableFields = {};
       try {
@@ -412,27 +433,28 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
           'method': 'fields_get',
           'args': [],
           'kwargs': {
-            'attributes': ['type', 'selection']
+            'attributes': ['type', 'selection'],
           },
         });
         availableFields = fieldsResponse as Map<String, dynamic>;
       } catch (e) {}
 
-      final fieldsToFetch = [
-        'name',
-        'email',
-        'work_phone',
-        'work_location_id',
-        'department_id',
-        'lang',
-        'tz',
-        'notification_type',
-        'odoobot_state',
-        'signature',
-        'partner_id',
-        'marital',
-        'image_1920',
-      ].where((field) => availableFields.containsKey(field)).toList();
+      final fieldsToFetch =
+          [
+            'name',
+            'email',
+            'work_phone',
+            'work_location_id',
+            'department_id',
+            'lang',
+            'tz',
+            'notification_type',
+            'odoobot_state',
+            'signature',
+            'partner_id',
+            'marital',
+            'image_1920',
+          ].where((field) => availableFields.containsKey(field)).toList();
 
       Map<String, dynamic> userData = {};
       if (fieldsToFetch.isNotEmpty) {
@@ -442,7 +464,7 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
             'method': 'read',
             'args': [
               [session.userId],
-              fieldsToFetch
+              fieldsToFetch,
             ],
             'kwargs': {},
           });
@@ -450,47 +472,107 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
         } catch (e) {}
       }
 
-      await storageService.saveAccount({
-        'username': session.userName,
-        'userLogin': session.userLogin,
-        'userId': session.userId,
-        'sessionId': session.id,
-        'serverVersion': session.serverVersion,
-        'userLang': session.userLang,
-        'partnerId': session.partnerId,
-        'userTimezone': session.userTz,
-        'companyId': session.companyId,
-        'isSystem': session.isSystem,
-        'uri': url,
-        'dbName': dbName,
-        'password': _passwordController.text.trim(),
-        'image': userData['image_1920'] ?? '',
-      });
-      await _saveUserData(prefs, session, userData, availableFields, url, dbName);
-      await _saveSignedAccountToIsar(
-          userData, session.userId.toString(), session.companyId.toString(), url, dbName);
-      await _saveSignedAccountListingToIsar(userData, url, dbName);
-      await _saveSignedAccount(_usernameController.text, dbName);
+      await AuthService().saveAuthenticatedSession(
+        url: url,
+        database: dbName,
+        username: _usernameController.text.trim(),
+        password: _passwordController.text.trim(),
+        sessionId: session.id,
+        userId: session.userId,
+        userLogin: session.userLogin,
+        userName:
+            (userData['name'] is String &&
+                    (userData['name'] as String).isNotEmpty)
+                ? userData['name'] as String
+                : session.userName,
+        partnerId: session.partnerId,
+        userLang: session.userLang,
+        userTz: session.userTz,
+        isSystem: session.isSystem,
+        serverVersion: session.serverVersion,
+        companyId: session.companyId,
+        imageBase64:
+            ImageUtils.base64Of(userData['image_1920']),
+      );
+
+      await _saveUrlHistoryWithProtocol(
+        _workingProtocol ?? selectedProtocol,
+        _urlController.text.trim(),
+        dbName,
+        _usernameController.text.trim(),
+        _passwordController.text.trim(),
+      );
 
       if (context.mounted) {
-        Navigator.pushReplacementNamed(
-          context,
-          '/webapp',
-          arguments: {
-            'serverUrl': url,
-            'dbName': dbName,
-            'sessionId': session.id,
-          },
-        );
+        Navigator.pushReplacementNamed(context, '/backend');
       }
     } catch (e) {
+      final formatted = _formatLoginError(e);
+      if (formatted == AuthService.genericSwitchAccountFailureMessage) {
+        // Unrecognized failure, being treated as "this account likely has
+        // 2FA enabled" — a heuristic guess, not a real check. Log the raw
+        // error so a false positive can be diagnosed instead of silently
+        // masked by the 2FA screen.
+        debugPrint(
+          'AddAccount: unrecognized failure, assuming 2FA — raw error: $e',
+        );
+        setState(() {
+          _isLoading = false;
+        });
+        if (!mounted) return;
+        final url =
+            '${_workingProtocol ?? selectedProtocol}${_urlController.text.trim()}';
+        final dbName = _selectedDatabase ?? '';
+        final result = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder:
+                (_) => TwoFactorAuthPage(
+                  serverUrl: url,
+                  database: dbName,
+                  username: _usernameController.text.trim(),
+                  password: _passwordController.text.trim(),
+                  onSuccessRouteName: '/backend',
+                ),
+          ),
+        );
+        if (result == false) {
+          setState(() {
+            _errorMessage = null;
+          });
+        }
+        return;
+      }
+      if (e.toString().toLowerCase().contains('runbot')) {
+        // A Runbot test server blocking this database from the caller's
+        // network location — an external access restriction. Show it as a
+        // popup rather than inline text, matching how the same case is
+        // presented once already logged in (BackendPage's alerts). "OK"
+        // stays on this screen to try different credentials; "Back" leaves
+        // the Add Account flow entirely, same as the POS-access dialog.
+        setState(() => _isLoading = false);
+        if (mounted) {
+          final confirmed = await AppDialogs.showConfirm(
+            context,
+            title: 'Server Not Accessible',
+            message: formatted,
+            confirmText: 'OK',
+            cancelText: 'Back',
+          );
+          if (confirmed != true && mounted && Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+        }
+        return;
+      }
       setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+        _errorMessage = formatted;
       });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -525,17 +607,18 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: _isLoading
-                      ? null
-                      : () {
-                          if (_currentStep == 1) {
-                            setState(() {
-                              _currentStep = 0;
-                            });
-                          } else {
-                            Navigator.of(context).pop();
-                          }
-                        },
+                  onTap:
+                      _isLoading
+                          ? null
+                          : () {
+                            if (_currentStep == 1) {
+                              setState(() {
+                                _currentStep = 0;
+                              });
+                            } else {
+                              Navigator.of(context).pop();
+                            }
+                          },
                   borderRadius: BorderRadius.circular(32),
                   child: Container(
                     height: 64,
@@ -595,14 +678,14 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                     children: [
                       const SizedBox(height: 20),
                       const SizedBox(height: 45),
-                      Align(
-                        alignment: Alignment.center,
+                      FittedBox(
                         child: Text(
-                          "Add New Account",
-                          style: AppStyle.font(
-                              size: 32,
-                              weight: FontWeight.w600,
-                              color: Colors.white),
+                          "Add Account",
+                          style: GoogleFonts.montserrat(
+                            fontSize: 32,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -622,25 +705,98 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               if (_currentStep == 0) ...[
-                                _buildUrlInput(),
+                                LoginUrlTextField(
+                                  controller: _urlController,
+                                  hint: 'Enter Server Address',
+                                  prefixIcon:
+                                      HugeIcons.strokeRoundedServerStack01,
+                                  enabled: !_isLoading,
+                                  isLoading: _isFetchingDatabases,
+                                  selectedProtocol: selectedProtocol,
+                                  urlHistory: _urlHistory,
+                                  onProtocolChanged: (value) {
+                                    setState(() {
+                                      selectedProtocol = value;
+                                    });
+                                    _fetchDatabaseList();
+                                  },
+                                  onProtocolDetected: (protocol) {
+                                    _pendingProtocol = protocol;
+                                  },
+                                  onHistorySelected: _onHistorySelected,
+                                  onChanged: (_) {},
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return 'Server URL is required';
+                                    }
+                                    return null;
+                                  },
+                                  hasError: showError,
+                                ),
                                 const SizedBox(height: 20),
                                 if (_databases.isNotEmpty) ...[
-                                  _buildDatabaseDropdown(),
+                                  LoginDropdownField(
+                                    hint: 'Select Database',
+                                    value: _selectedDatabase,
+                                    items: _databases,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedDatabase = value;
+                                      });
+                                    },
+                                    validator: (value) {
+                                      if (value == null) {
+                                        return 'Please select a database';
+                                      }
+                                      return null;
+                                    },
+                                  ),
                                   const SizedBox(height: 20),
                                 ],
                               ] else ...[
-                                _buildInputField(
+                                LoginTextField(
                                   controller: _usernameController,
-                                  label: "Username",
-                                  icon: HugeIcons.strokeRoundedUser03,
+                                  hint: 'Username',
+                                  prefixIcon: HugeIcons.strokeRoundedUser03,
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return 'Username is required';
+                                    }
+                                    return null;
+                                  },
                                 ),
                                 const SizedBox(height: 20),
-                                _buildInputField(
+                                LoginTextField(
                                   controller: _passwordController,
-                                  label: "Password",
-                                  obscure: true,
-                                  icon: HugeIcons.strokeRoundedSquareLockPassword,
-                                  isPasswordField: true,
+                                  hint: 'Password',
+                                  obscureText: !_isPasswordVisible,
+                                  prefixIcon:
+                                      HugeIcons.strokeRoundedSquareLockPassword,
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return 'Password is required';
+                                    }
+                                    return null;
+                                  },
+                                  suffixIcon: IconButton(
+                                    icon: HugeIcon(
+                                      icon:
+                                          _isPasswordVisible
+                                              ? HugeIcons.strokeRoundedView
+                                              : HugeIcons.strokeRoundedViewOff,
+                                      color:
+                                          _isPasswordVisible
+                                              ? Colors.black26
+                                              : Colors.black54,
+                                      size: 20,
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _isPasswordVisible =
+                                            !_isPasswordVisible;
+                                      });
+                                    },
+                                  ),
                                 ),
                               ],
                             ],
@@ -652,7 +808,13 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                           padding: const EdgeInsets.only(top: 8.0),
                           child: Text(
                             _errorMessage!,
-                            style: AppStyle.font(color: Colors.red),
+                            // Colors.red reads as a muted, low-contrast
+                            // reddish-brown against this screen's dark
+                            // maroon/pink background. Matches the mobo CRM
+                            // app's equivalent screen (server_url_screen.dart)
+                            // and this app's own LoginErrorDisplay widget,
+                            // both of which use plain white here.
+                            style: AppStyle.font(color: Colors.white),
                           ),
                         ),
                       const SizedBox(height: 16),
@@ -660,29 +822,37 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: _isLoading
-                              ? null
-                              : () {
-                                  if (_currentStep == 0) {
-                                    if (_loginFormKey.currentState!
-                                        .validate()) {
-                                      if (_databases.isNotEmpty &&
-                                          _selectedDatabase == null) {
+                          onPressed:
+                              _isLoading
+                                  ? null
+                                  : () {
+                                    if (_currentStep == 0) {
+                                      if (_loginFormKey.currentState!
+                                          .validate()) {
+                                        if (_isFetchingDatabases) {
+                                          setState(() {
+                                            _errorMessage =
+                                                "Please wait while the server is being verified...";
+                                          });
+                                          return;
+                                        }
+                                        if (_databases.isNotEmpty &&
+                                            _selectedDatabase == null) {
+                                          setState(() {
+                                            _errorMessage =
+                                                "Please select a database";
+                                          });
+                                          return;
+                                        }
                                         setState(() {
-                                          _errorMessage =
-                                              "Please select a database";
+                                          _currentStep = 1;
+                                          _errorMessage = null;
                                         });
-                                        return;
                                       }
-                                      setState(() {
-                                        _currentStep = 1;
-                                        _errorMessage = null;
-                                      });
+                                    } else {
+                                      _addAccount();
                                     }
-                                  } else {
-                                    _addAccount();
-                                  }
-                                },
+                                  },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.black,
                             shape: RoundedRectangleBorder(
@@ -690,33 +860,34 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                             ),
                             elevation: 0,
                           ),
-                          child: _isLoading
-                              ? Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      'Adding',
-                                      style: AppStyle.font(
-                                        size: 14,
-                                        weight: FontWeight.w600,
-                                        color: Colors.white,
+                          child:
+                              _isLoading
+                                  ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        'Adding',
+                                        style: AppStyle.font(
+                                          size: 14,
+                                          weight: FontWeight.w600,
+                                          color: Colors.white,
+                                        ),
                                       ),
+                                      const SizedBox(width: 12),
+                                      LoadingAnimationWidget.staggeredDotsWave(
+                                        color: Colors.white,
+                                        size: 28,
+                                      ),
+                                    ],
+                                  )
+                                  : Text(
+                                    _currentStep == 0 ? 'Next' : 'Add Account',
+                                    style: AppStyle.font(
+                                      color: Color(0xFFFFFFFF),
+                                      size: 16,
+                                      weight: FontWeight.bold,
                                     ),
-                                    const SizedBox(width: 12),
-                                    LoadingAnimationWidget.staggeredDotsWave(
-                                      color: Colors.white,
-                                      size: 28,
-                                    ),
-                                  ],
-                                )
-                              : Text(
-                                  _currentStep == 0 ? 'Next' : 'Add Account',
-                                  style: AppStyle.font(
-                                    color: Color(0xFFFFFFFF),
-                                    size: 16,
-                                    weight: FontWeight.bold,
                                   ),
-                                ),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -727,228 +898,6 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildInputField({
-    required TextEditingController controller,
-    required String label,
-    bool obscure = false,
-    dynamic icon,
-    Function(String)? onChanged,
-    bool isPasswordField = false,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return TextFormField(
-      controller: controller,
-      obscureText: isPasswordField ? !_isPasswordVisible : obscure,
-      onChanged: onChanged,
-      validator: (value) {
-        if (value == null || value.isEmpty) {
-          return '$label is required';
-        }
-        return null;
-      },
-      style: AppStyle.font(color: Colors.black),
-      decoration: InputDecoration(
-        hintText: label,
-        hintStyle: AppStyle.font(
-            size: 14,
-            weight: FontWeight.w400,
-            color: Colors.black.withOpacity(.4)),
-        prefixIcon: icon != null ? Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: HugeIcon(icon: icon, color: isDark ? Colors.white70 : Colors.black26, size: 20),
-        ) : null,
-        suffixIcon: isPasswordField
-            ? IconButton(
-                icon: HugeIcon(
-                  icon: _isPasswordVisible ? HugeIcons.strokeRoundedView : HugeIcons.strokeRoundedViewOff,
-                  color: _isPasswordVisible ? Colors.black26 : Colors.black54,
-                  size: 20,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _isPasswordVisible = !_isPasswordVisible;
-                  });
-                },
-              )
-            : null,
-        filled: true,
-        fillColor: Colors.grey.shade100,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-        errorStyle: AppStyle.font(
-          color: Colors.white,
-          weight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildUrlInput() {
-    return Row(
-      children: [
-        Container(
-          height: 50,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade100,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(12),
-              bottomLeft: Radius.circular(12),
-            ),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton2<String>(
-              value: selectedProtocol,
-              items: ['https://', 'http://']
-                  .map((item) => DropdownMenuItem<String>(
-                        value: item,
-                        child: Text(
-                          item,
-                          style: AppStyle.font(
-                            size: 14,
-                            weight: FontWeight.w600,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                setState(() {
-                  selectedProtocol = value!;
-                  _fetchDatabaseList();
-                });
-              },
-              buttonStyleData: const ButtonStyleData(
-                height: 50,
-                width: 85,
-              ),
-              dropdownStyleData: DropdownStyleData(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: TextFormField(
-            controller: _urlController,
-            style: AppStyle.font(color: Colors.black),
-            decoration: InputDecoration(
-              hintText: "Server URL",
-              hintStyle: AppStyle.font(
-                  size: 14,
-                  weight: FontWeight.w400,
-                  color: Colors.black.withOpacity(.4)),
-              filled: true,
-              fillColor: Colors.grey.shade100,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 14,
-              ),
-              border: const OutlineInputBorder(
-                borderRadius: BorderRadius.only(
-                  topRight: Radius.circular(12),
-                  bottomRight: Radius.circular(12),
-                ),
-                borderSide: BorderSide.none,
-              ),
-            ),
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'Server URL is required';
-              }
-              return null;
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDatabaseDropdown() {
-    return DropdownButtonHideUnderline(
-      child: DropdownButtonFormField2<String>(
-        value: _databases.contains(_selectedDatabase) ? _selectedDatabase : null,
-        isExpanded: true,
-        decoration: InputDecoration(
-          filled: true,
-          fillColor: Colors.grey.shade100,
-          contentPadding: const EdgeInsets.symmetric(vertical: 14),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          prefixIcon: Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: HugeIcon(
-              icon: HugeIcons.strokeRoundedDatabase,
-              color: Colors.black26,
-              size: 20,
-            ),
-          ),
-        ),
-        hint: Text(
-          'Select Database',
-          style: AppStyle.font(
-            size: 14,
-            weight: FontWeight.w400,
-            color: Colors.black.withOpacity(.4),
-          ),
-        ),
-        items: _databases
-            .map((item) => DropdownMenuItem<String>(
-                  value: item,
-                  child: Text(
-                    item,
-                    style: AppStyle.font(
-                      size: 14,
-                      color: Colors.black,
-                    ),
-                  ),
-                ))
-            .toList(),
-        validator: (value) {
-          if (value == null) {
-            return 'Please select a database';
-          }
-          return null;
-        },
-        onChanged: (value) {
-          setState(() {
-            _selectedDatabase = value;
-          });
-        },
-        buttonStyleData: const ButtonStyleData(
-          padding: EdgeInsets.only(right: 8),
-        ),
-        iconStyleData: const IconStyleData(
-          icon: Icon(
-            Icons.arrow_drop_down,
-            color: Colors.black45,
-          ),
-          iconSize: 24,
-        ),
-        dropdownStyleData: DropdownStyleData(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: Colors.white,
-          ),
-        ),
-        menuItemStyleData: const MenuItemStyleData(
-          padding: EdgeInsets.symmetric(horizontal: 16),
-        ),
       ),
     );
   }

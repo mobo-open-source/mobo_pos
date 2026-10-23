@@ -1,3 +1,5 @@
+import '../services/database_expiry.dart';
+import '../core/image_utils.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -137,7 +139,15 @@ class _UserLoginScreenState extends State<UserLoginScreen> {
             password,
           )
           .timeout(const Duration(seconds: 30));
-      
+
+      if (await DatabaseExpiry.isExpired(
+        serverUrl: widget.serverUrl,
+        sessionId: response.id,
+      )) {
+        await DatabaseExpiry.markExpired(widget.serverUrl, widget.database);
+        throw const DatabaseExpiredException();
+      }
+      await DatabaseExpiry.unmarkExpired(widget.serverUrl, widget.database);
 
       // Fetch company information
       int? companyId;
@@ -220,7 +230,7 @@ class _UserLoginScreenState extends State<UserLoginScreen> {
         'uri': widget.serverUrl,
         'dbName': widget.database,
         'password': _passwordController.text,
-        'image': userData['image_1920'] ?? '',
+        'image': ImageUtils.base64Of(userData['image_1920']),
       });
       await _saveUserData(prefs, updatedSession, userData, {});
       
@@ -364,7 +374,9 @@ class _UserLoginScreenState extends State<UserLoginScreen> {
         setState(() => _isLoading = false);
       }
       
-      String errorMessage = _formatLoginError(e);
+      String errorMessage = e is DatabaseExpiredException
+          ? DatabaseExpiredException.message
+          : _formatLoginError(e);
 
       // Clear invalid session data
       await prefs.remove('session_id');
@@ -516,7 +528,7 @@ class _UserLoginScreenState extends State<UserLoginScreen> {
           ? (userData['marital']?.toString() ?? '')
           : ''
       ..profileImageBase64 = availableFields.containsKey('image_1920')
-          ? (userData['image_1920']?.toString() ?? '')
+          ? ImageUtils.base64Of(userData['image_1920'])
           : ''
       ..companyId = session.companyId.toString()
       ..dbName = widget.database
@@ -545,7 +557,7 @@ class _UserLoginScreenState extends State<UserLoginScreen> {
       ..database = widget.database
       ..password = _passwordController.text
       ..userNameDisplay = userData['name']?.toString() ?? ''
-      ..profileImage = userData['image_1920']?.toString() ?? ''
+      ..profileImage = ImageUtils.base64Of(userData['image_1920'])
       ..accountIdentifier = '${_usernameController.text.trim()}@${widget.database}';
 
     try {

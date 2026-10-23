@@ -19,7 +19,9 @@ class StorageService {
     await prefs.setString("serverVersion", session.serverVersion);
     await prefs.setString("companyId", session.companyId.toString());
     await prefs.setString(
-        "allowedCompanies", session.allowedCompanies.toString());
+      "allowedCompanies",
+      session.allowedCompanies.toString(),
+    );
   }
 
   /// Saves the login state, database name, server URL, and password to persistent storage.
@@ -56,10 +58,12 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final accounts = await getAccounts();
 
-    accounts.removeWhere((a) =>
-        a['userId'] == account['userId'] &&
-        a['uri'] == account['uri'] &&
-        a['dbName'] == account['dbName']);
+    accounts.removeWhere(
+      (a) =>
+          a['userId'] == account['userId'] &&
+          a['uri'] == account['uri'] &&
+          a['dbName'] == account['dbName'],
+    );
 
     accounts.add(account);
 
@@ -77,5 +81,19 @@ class StorageService {
   Future<void> clearAccounts() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_accountsKey);
+  }
+
+  /// Removes a single account from the list of logged-in accounts, matched
+  /// the same way [saveAccount] dedupes: by `(userId, uri, dbName)`.
+  Future<void> removeAccount(Map<String, dynamic> account) async {
+    final prefs = await SharedPreferences.getInstance();
+    final accounts = await getAccounts();
+    accounts.removeWhere(
+      (a) =>
+          a['userId'] == account['userId'] &&
+          a['uri'] == account['uri'] &&
+          a['dbName'] == account['dbName'],
+    );
+    await prefs.setString(_accountsKey, jsonEncode(accounts));
   }
 }

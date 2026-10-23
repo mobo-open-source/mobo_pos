@@ -13,19 +13,12 @@ class ReviewService {
   factory ReviewService() => _instance;
   ReviewService._internal();
 
-  @visibleForTesting
-  void reset() {
-    _wasRequestedThisRun = false;
-    _wasTrackedThisRun = false;
-  }
-
   final InAppReview _inAppReview = InAppReview.instance;
-
-  // Keys for SharedPreferences
+  
   static const String _keyOpenCount = 'review_open_count';
   static const String _keyEventCount = 'review_event_count';
   static const String _keyFirstOpenDate = 'review_first_open_date';
-  static const String _keyLastRequestDate = 'review_last_request_date';
+  static const String _keyNextAllowedDate = 'review_next_allowed_date';
   static const String _keyNeverAskAgain = 'review_never_ask_again';
 
   // Thresholds
@@ -35,6 +28,13 @@ class ReviewService {
 
   bool _wasRequestedThisRun = false;
   bool _wasTrackedThisRun = false;
+
+  /// Reset internal state flags (useful for testing)
+  @visibleForTesting
+  void reset() {
+    _wasRequestedThisRun = false;
+    _wasTrackedThisRun = false;
+  }
 
   /// Tracks that the app has been opened, incrementing the open count in SharedPreferences.
   Future<void> trackAppOpen() async {
@@ -71,76 +71,80 @@ class ReviewService {
       return;
     }
 
-    bool shouldRequest = false;
-
-    // Criteria 1: Nth usage (open)
-    int openCount = prefs.getInt(_keyOpenCount) ?? 0;
-    if (openCount >= _thresholdOpens) {
-      shouldRequest = true;
+    // Check if we are past the next allowed date
+    int? nextAllowedEpoch = prefs.getInt(_keyNextAllowedDate);
+    if (nextAllowedEpoch != null) {
+      final nextAllowedDate = DateTime.fromMillisecondsSinceEpoch(nextAllowedEpoch);
+      if (DateTime.now().isBefore(nextAllowedDate)) {
+        return;
+      }
     }
 
-    // Criteria 2: Nth significant event
-    int eventCount = prefs.getInt(_keyEventCount) ?? 0;
-    if (eventCount >= _thresholdEvents) {
-      shouldRequest = true;
-    }
+    if (await _inAppReview.isAvailable()) {
+      bool shouldRequest = false;
 
-    // Criteria 3: N days usage
-    int? firstOpenEpoch = prefs.getInt(_keyFirstOpenDate);
-    if (firstOpenEpoch != null) {
-      final firstOpenDate = DateTime.fromMillisecondsSinceEpoch(firstOpenEpoch);
-      final diff = DateTime.now().difference(firstOpenDate).inDays;
-      if (diff >= _thresholdDays) {
+      // Criteria 1: Nth usage (open)
+      int openCount = prefs.getInt(_keyOpenCount) ?? 0;
+      if (openCount >= _thresholdOpens) {
         shouldRequest = true;
       }
-    }
 
-    if (shouldRequest) {
-      int? lastRequestEpoch = prefs.getInt(_keyLastRequestDate);
-      if (lastRequestEpoch != null) {
-        final lastRequest = DateTime.fromMillisecondsSinceEpoch(lastRequestEpoch);
-        final daysSinceLastRequest = DateTime.now().difference(lastRequest).inDays;
+      // Criteria 2: Nth significant event
+      int eventCount = prefs.getInt(_keyEventCount) ?? 0;
+      if (eventCount >= _thresholdEvents) {
+        shouldRequest = true;
+      }
 
-        // Request again only if it's been a long time (e.g. 30 days)
-        if (daysSinceLastRequest < 30) {
-          return;
+      // Criteria 3: N days usage
+      int? firstOpenEpoch = prefs.getInt(_keyFirstOpenDate);
+      if (firstOpenEpoch != null) {
+        final firstOpenDate = DateTime.fromMillisecondsSinceEpoch(firstOpenEpoch);
+        final diff = DateTime.now().difference(firstOpenDate).inDays;
+        if (diff >= _thresholdDays) {
+           shouldRequest = true;
         }
       }
 
-      // Use provided context or fall back to navigatorKey's context for better reliability
-      final effectiveContext = (context != null && context.mounted) 
-          ? context 
-          : navigatorKey.currentContext;
+      if (shouldRequest) {
+        final effectiveContext = (context != null && context.mounted)
+            ? context
+            : navigatorKey.currentContext;
 
-
-      if (effectiveContext != null && effectiveContext.mounted) {
-        _wasRequestedThisRun = true;
-        try {
-          CustomRatingDialog.show(effectiveContext);
-        } catch (e) {
-          _wasRequestedThisRun = false; // Reset so it can be tried again
+        if (effectiveContext != null && effectiveContext.mounted) {
+           _wasRequestedThisRun = true;
+           try {
+             CustomRatingDialog.show(effectiveContext);
+           } catch (e) {
+             _wasRequestedThisRun = false;
+           }
         }
-      } else {
       }
-    } else {
     }
+  }
+
+  /// Postpone the review dialog by a specific duration
+  Future<void> postponeReview(Duration duration) async {
+    final prefs = await SharedPreferences.getInstance();
+    final nextAllowedDate = DateTime.now().add(duration);
+    await prefs.setInt(_keyNextAllowedDate, nextAllowedDate.millisecondsSinceEpoch);
   }
 
   /// Track app open and show dialog if criteria met
   Future<void> checkAndShowRating(BuildContext context) async {
-    final prefs = await SharedPreferences.getInstance();
-    await _checkAndRequestReview(prefs, context);
+     final prefs = await SharedPreferences.getInstance();
+     await _checkAndRequestReview(prefs, context);
   }
 
-  /// Force a review request. If the native dialog is suppressed by Google Play
+  /// Force a review request. If the native dialog is suppressed by the platform
   /// (due to quotas), it will fall back to opening the Store Listing directly.
-  /// Forces a review request using the native in-app review dialog.
   Future<void> forceRequestReview() async {
+    // Update next allowed date to enforce cooldown period
+    await postponeReview(const Duration(days: 30));
 
     // Show a small snackbar so the user knows the code is working
     scaffoldMessengerKey.currentState?.showSnackBar(
       SnackBar(
-        content: const Text('🔄 Requesting Google Play review...'),
+        content: const Text('🔄 Requesting review...'),
         duration: const Duration(seconds: 2),
         backgroundColor: Colors.blue[700],
       ),
@@ -169,7 +173,6 @@ class ReviewService {
   }
 
   /// Send email feedback for low ratings (1-3 stars)
-  /// Launches the device's mail app to send feedback for low ratings.
   Future<void> sendEmailFeedback(double rating, String comment) async {
     try {
       final String platform = Platform.isAndroid ? 'Android' : (Platform.isIOS ? 'iOS' : Platform.operatingSystem);
@@ -193,7 +196,7 @@ class ReviewService {
   String? encodeQueryParameters(Map<String, String> params) {
     return params.entries
         .map((MapEntry<String, String> e) =>
-    '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
+            '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
         .join('&');
   }
 
@@ -210,19 +213,25 @@ class ReviewService {
     int openCount = prefs.getInt(_keyOpenCount) ?? 0;
     int eventCount = prefs.getInt(_keyEventCount) ?? 0;
     int? firstOpenEpoch = prefs.getInt(_keyFirstOpenDate);
-    int? lastRequestEpoch = prefs.getInt(_keyLastRequestDate);
-
+    int? nextAllowedEpoch = prefs.getInt(_keyNextAllowedDate);
 
     if (firstOpenEpoch != null) {
       final firstOpenDate = DateTime.fromMillisecondsSinceEpoch(firstOpenEpoch);
       final daysSinceFirst = DateTime.now().difference(firstOpenDate).inDays;
-    } else {
     }
 
-    if (lastRequestEpoch != null) {
-      final lastRequestDate = DateTime.fromMillisecondsSinceEpoch(lastRequestEpoch);
-    } else {
+    if (nextAllowedEpoch != null) {
+      final nextAllowedDate = DateTime.fromMillisecondsSinceEpoch(nextAllowedEpoch);
     }
+  }
 
+  /// Reset all review tracking data (useful for testing)
+  Future<void> resetReviewTracking() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyOpenCount);
+    await prefs.remove(_keyEventCount);
+    await prefs.remove(_keyFirstOpenDate);
+    await prefs.remove(_keyNextAllowedDate);
+    await prefs.remove(_keyNeverAskAgain);
   }
 }

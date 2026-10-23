@@ -40,6 +40,19 @@ class NetworkService {
       final responseBody = await response.transform(utf8.decoder).join();
       httpClient.close();
       final jsonResponse = jsonDecode(responseBody);
+      if (jsonResponse is Map && jsonResponse.containsKey('error')) {
+        final error = jsonResponse['error'];
+        final message = (error is Map) ? (error['message'] ?? '').toString() : '';
+        final data = (error is Map) ? error['data'] : null;
+        final dataMessage =
+            (data is Map) ? (data['message'] ?? '').toString() : '';
+
+        if (message.contains('Access Denied') ||
+            dataMessage.contains('Access Denied') ||
+            message.contains('Forbidden')) {
+          throw Exception('DATABASE_MANAGER_DISABLED');
+        }
+      }
       if (jsonResponse['result'] is List) {
         return (jsonResponse['result'] as List).map((db) => db.toString()).toList();
       }

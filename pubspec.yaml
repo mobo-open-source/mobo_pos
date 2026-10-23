@@ -14,9 +14,9 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
 # Read more about iOS versioning at
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
-# In Windows, build-name is used as the major, minor, and patch parts
+# In Windows, build-name is used `as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.1+14
+version: 1.0.2+17
 
 environment:
   sdk: ^3.7.2
@@ -36,11 +36,13 @@ dependencies:
   shared_preferences: ^2.3.2
   odoo_rpc: ^0.7.1
   http: ^1.2.2
+  flutter_switch: ^0.3.2
   image_picker: ^1.1.2
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   flutter_inappwebview: ^6.1.5
+  flutter_svg: ^2.2.3
   local_auth: ^3.0.0
   # flutter_native_splash: ^2.4.5  # Commented out to avoid conflicts with custom video splash
   video_player: ^2.9.5
@@ -49,6 +51,7 @@ dependencies:
   isar_community: ^3.3.0
   logging: ^1.2.0
   path_provider: ^2.1.2
+  open_file: ^3.5.10
   google_fonts: ^6.3.2
   hugeicons: ^1.1.1
   url_launcher: ^6.2.4
@@ -58,6 +61,7 @@ dependencies:
   in_app_review: ^2.0.11
   flutter_rating_bar: ^4.0.1
   dropdown_button2: ^2.3.9
+  permission_handler: ^12.0.1
 
 dev_dependencies:
   flutter_test:
